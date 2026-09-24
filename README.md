@@ -2,6 +2,8 @@
 
 Simulateur de balade dans une ville cyberpunk en voxels (Three.js + TypeScript + Vite).
 
+**Jouer en ligne : https://gandalflaigri.github.io/neo-kowloon/** (navigateur de bureau avec WebGL 2, clavier et souris ; cliquez sur « Entrer dans la ville »).
+
 ```bash
 npm install
 npm run dev      # http://localhost:5173
