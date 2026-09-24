@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neo-Kowloon</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;800&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --neon: #ff2a9d;
+        --cyan: #00e5ff;
+        --ink: #e9e6ff;
+        --dim: #8c86b8;
+        --bg: rgba(10, 6, 20, 0.72);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #07050d; overflow: hidden; color: var(--ink); font-family: 'Share Tech Mono', ui-monospace, monospace; }
+      canvas#view { display: block; width: 100vw; height: 100vh; }
+      .hidden { display: none !important; }
+
+      #hud { position: fixed; inset: 0; pointer-events: none; }
+      #topleft { position: absolute; top: 18px; left: 22px; text-shadow: 0 0 8px rgba(255, 42, 157, 0.6); }
+      .brand { font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: 0.18em; font-size: 15px; color: var(--neon); }
+      .brand span { color: var(--cyan); font-weight: 500; }
+      #alt { margin-top: 6px; font-size: 14px; color: var(--ink); }
+      #mode { font-size: 12px; color: var(--dim); margin-top: 2px; letter-spacing: 0.1em; }
+      #cross { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255, 255, 255, 0.75); box-shadow: 0 0 6px var(--cyan); }
+      #prompt { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); padding: 8px 16px; background: var(--bg); border: 1px solid rgba(0, 229, 255, 0.5); color: var(--cyan); font-size: 15px; letter-spacing: 0.06em; box-shadow: 0 0 18px rgba(0, 229, 255, 0.25); }
+      #prompt:empty { display: none; }
+      #prompt b { color: #fff; }
+      #elev, #train { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); min-width: 250px; background: var(--bg); border: 1px solid rgba(255, 42, 157, 0.55); padding: 12px 14px; box-shadow: 0 0 24px rgba(255, 42, 157, 0.25); }
+      #elev h3, #train h3 { margin: 0 0 8px; font-family: 'Orbitron', sans-serif; font-size: 12px; letter-spacing: 0.16em; color: var(--neon); font-weight: 500; }
+      #elev .row, #train .row { display: flex; gap: 10px; padding: 3px 4px; font-size: 14px; color: var(--dim); }
+      #elev .row .k, #train .row .k { color: var(--cyan); min-width: 18px; }
+      #elev .row.cur, #train .row.cur { color: #fff; background: rgba(0, 229, 255, 0.12); }
+      #elev .row.tgt, #train .row.tgt { color: #fff; animation: blink 0.8s steps(2) infinite; }
+      #elev .foot, #train .foot { margin-top: 8px; font-size: 11px; color: var(--dim); }
+      @keyframes blink { 50% { opacity: 0.35; } }
+      #help { position: absolute; left: 22px; bottom: 18px; font-size: 12px; color: var(--dim); line-height: 1.6; background: rgba(8, 5, 16, 0.45); padding: 8px 12px; border-left: 2px solid var(--neon); }
+      #help b { color: var(--ink); font-weight: normal; }
+      #fps { position: absolute; right: 16px; top: 14px; font-size: 11px; color: var(--dim); }
+      #toast { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); font-family: 'Orbitron', sans-serif; letter-spacing: 0.2em; font-size: 14px; color: #fff; text-shadow: 0 0 12px var(--neon); opacity: 0; transition: opacity 0.6s; }
+      #toast.on { opacity: 1; }
+
+      #map { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(80vh, 90vw); height: min(80vh, 90vw); border: 1px solid rgba(0, 229, 255, 0.5); box-shadow: 0 0 40px rgba(0, 229, 255, 0.2); background: rgba(6, 4, 12, 0.9); pointer-events: none; }
+      #map.interactive { pointer-events: auto; cursor: crosshair; left: calc(50% - 150px); }
+      #dests { position: fixed; top: 50%; transform: translateY(-50%); left: calc(50% - 150px + min(40vh, 45vw) + 14px); width: 290px; max-height: 80vh; overflow-y: auto; background: rgba(8, 5, 16, 0.9); border: 1px solid rgba(255, 42, 157, 0.45); padding: 10px 12px; }
+      #dests h4 { margin: 10px 0 4px; font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 0.16em; font-weight: 500; }
+      #dests button { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--ink); font-family: inherit; font-size: 13px; padding: 3px 4px; cursor: pointer; }
+      #dests button:hover { background: rgba(0, 229, 255, 0.14); color: #fff; }
+      #dests .hint { font-size: 11px; color: var(--dim); }
+
+      #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(20, 8, 36, 0.55), rgba(4, 2, 10, 0.88)); }
+      #menu .panel { width: min(560px, 92vw); padding: 30px 34px; background: rgba(10, 6, 20, 0.82); border: 1px solid rgba(255, 42, 157, 0.5); box-shadow: 0 0 60px rgba(255, 42, 157, 0.18), inset 0 0 40px rgba(0, 229, 255, 0.05); }
+      #menu h1 { margin: 0; font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: clamp(26px, 5vw, 40px); letter-spacing: 0.14em; color: #fff; text-shadow: 0 0 18px var(--neon), 0 0 42px var(--neon); }
+      #menu h2 { margin: 6px 0 22px; font-weight: normal; font-size: 14px; letter-spacing: 0.3em; color: var(--cyan); }
+      #menu .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 18px; font-size: 13px; color: var(--dim); margin-bottom: 20px; }
+      #menu .keys b { color: var(--ink); font-weight: normal; }
+      #menu button { font-family: 'Orbitron', sans-serif; letter-spacing: 0.16em; font-size: 14px; padding: 12px 22px; color: #fff; background: linear-gradient(90deg, rgba(255, 42, 157, 0.35), rgba(0, 229, 255, 0.25)); border: 1px solid var(--neon); cursor: pointer; }
+      #menu button:hover { box-shadow: 0 0 22px rgba(255, 42, 157, 0.5); }
+      #menu button:disabled { opacity: 0.4; cursor: wait; }
+      #menu button.ghost { background: transparent; border-color: rgba(0, 229, 255, 0.5); font-size: 12px; padding: 9px 14px; }
+      #menu .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+      #menu input[type='text'] { font-family: inherit; font-size: 14px; background: rgba(0, 0, 0, 0.4); color: var(--ink); border: 1px solid rgba(0, 229, 255, 0.4); padding: 8px 10px; width: 150px; }
+      #menu label { font-size: 13px; color: var(--dim); display: flex; gap: 6px; align-items: center; cursor: pointer; }
+      #menu input[type='range'] { width: 110px; accent-color: var(--neon); }
+      #menu select { font-family: inherit; background: rgba(0, 0, 0, 0.4); color: var(--ink); border: 1px solid rgba(0, 229, 255, 0.4); padding: 6px; }
+      #menu .opts { border-top: 1px solid rgba(255, 255, 255, 0.08); margin-top: 20px; padding-top: 8px; }
+      #status { font-size: 12px; color: var(--cyan); margin-top: 12px; min-height: 16px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud" class="hidden">
+      <div id="topleft">
+        <div class="brand">NEO-KOWLOON <span>· SECTEUR 7</span></div>
+        <div id="alt">ALT 0 m</div>
+        <div id="mode">À PIED</div>
+      </div>
+      <div id="cross"></div>
+      <div id="prompt"></div>
+      <div id="elev" class="hidden"></div>
+      <div id="train" class="hidden"></div>
+      <div id="help">
+        <b>ZQSD / WASD</b> marcher · <b>Maj</b> courir · <b>Espace</b> sauter<br />
+        <b>E</b> ascenseur · <b>1–9</b> choisir l'étage · <b>F</b> vol libre (<b>C</b> descendre) · <b>V</b> voiture volante<br />
+        <b>M</b> carte &amp; destinations · <b>R</b> retour au départ · <b>H</b> masquer l'aide · <b>Échap</b> menu
+      </div>
+      <div id="fps"></div>
+      <div id="toast"></div>
+    </div>
+    <canvas id="map" class="hidden" width="900" height="900"></canvas>
+    <div id="dests" class="hidden"></div>
+    <div id="menu">
+      <div class="panel">
+        <h1>NEO-KOWLOON</h1>
+        <h2>SECTEUR 7 · 2089</h2>
+        <div class="keys">
+          <b>ZQSD / WASD</b><span>se déplacer (Maj pour courir)</span>
+          <b>Souris</b><span>regarder</span>
+          <b>E</b><span>appeler l'ascenseur / étage suivant</span>
+          <b>1 – 9</b><span>choisir l'étage dans la cabine</span>
+          <b>F</b><span>vol libre (Espace monter · C descendre · Maj turbo)</span>
+          <b>V</b><span>appeler la voiture volante, monter / descendre (près du sol)</span>
+          <b>M</b><span>carte cliquable : choisir une destination pour s'y rendre</span>
+          <b>Métro</b><span>montez à quai quand les portes sont ouvertes</span>
+        </div>
+        <button id="play" disabled>CHARGEMENT…</button>
+        <div id="status"></div>
+        <div class="opts">
+          <div class="row">
+            <input id="seed" type="text" spellcheck="false" />
+            <button id="regen" class="ghost">NOUVELLE VILLE</button>
+          </div>
+          <div class="row">
+            <label><input id="optRefl" type="checkbox" checked /> Reflets</label>
+            <label><input id="optBloom" type="checkbox" checked /> Bloom</label>
+            <label>Pluie
+              <select id="optRain">
+                <option value="0">Aucune</option>
+                <option value="0.4">Légère</option>
+                <option value="1" selected>Battante</option>
+              </select>
+            </label>
+            <label><input id="optStorm" type="checkbox" checked /> Orage</label>
+            <label><input id="optAO" type="checkbox" checked /> Occlusion</label>
+            <label>Résolution
+              <select id="optRes">
+                <option value="1.5">Haute</option>
+                <option value="1" selected>Normale</option>
+                <option value="0.75">Performance</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Sensibilité <input id="optSens" type="range" min="0.5" max="3" step="0.1" value="1.1" /></label>
+            <label>Champ de vision <input id="optFov" type="range" min="60" max="100" step="1" value="78" /></label>
+          </div>
+          <div class="row">
+            <label>Volume <input id="optVol" type="range" min="0" max="1" step="0.05" value="0.8" /></label>
+            <label>Musique <input id="optMusic" type="range" min="0" max="1" step="0.05" value="0.5" /></label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
