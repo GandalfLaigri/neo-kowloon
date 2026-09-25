@@ -1,5 +1,5 @@
 import { HALF, NEON, PITCH, STYLE, hex, type RGB } from '../config';
-import { snap } from '../rng';
+import { snap, type RNG } from '../rng';
 import { dark, type Ctx } from './ctx';
 import type { Rect } from './geom';
 
@@ -38,8 +38,8 @@ const nearCross = (p: number, m = 11) => {
   return r < m || r > PITCH - m;
 };
 
-export function buildMetro(ctx: Ctx): MetroLine[] {
-  const { rng } = ctx;
+/** Tracé des lignes aériennes (sans géométrie). */
+export function planMetro(rng: RNG): MetroLine[] {
   const names = [...STATION_NAMES].sort(() => rng.next() - 0.5);
   const lines: MetroLine[] = [
     { id: 0, name: 'Ligne A', axis: 0, c: -HALF + rng.pick([3, 4, 6]) * PITCH, deck: 15, color: hex(0xffb000), stations: [] },
@@ -49,6 +49,12 @@ export function buildMetro(ctx: Ctx): MetroLine[] {
   for (const l of lines) {
     const segs = [1, rng.pick([4, 5]), 8];
     l.stations = segs.map((k) => ({ name: names[ni++ % names.length], p: -HALF + k * PITCH + PITCH / 2 }));
+  }
+  return lines;
+}
+
+export function buildMetro(ctx: Ctx, lines: MetroLine[]): MetroLine[] {
+  for (const l of lines) {
     buildViaduct(ctx, l);
     for (const st of l.stations) buildStation(ctx, l, st);
   }
@@ -131,10 +137,11 @@ function buildStation(ctx: Ctx, l: MetroLine, st: MetroStation) {
       if (p + 2.5 > land0 - 1 && p < land1 + 1) continue;
       ctx.box(Rs(p, p + 2.5, 6.0, 6.6), PT, PT + 0.5, { color: hex(0x4a3a2a) });
       for (let k = 0; k < 3; k++)
-        if (rng.chance(0.4)) { const [x, z] = P(p + 0.45 + k * 0.8, sg * 6.3); ctx.sit(x, PT + 0.5, z, yaw(0, -sg)); }
+        { const [x, z] = P(p + 0.45 + k * 0.8, sg * 6.3); ctx.seat(rng.chance(0.4), x, PT + 0.5, z, yaw(0, -sg)); }
     }
     ctx.box(Rs(pc - 12, pc - 11.4, 6.4, 7.0), PT, PT + 1.0, { color: hex(0x1f3a2a) });
     ctx.box(Rs(pc + 9, pc + 10, 6.2, 7.0), PT, PT + 2, { color: rng.pick([hex(0xff4fa0), hex(0x40d0ff)]), style: STYLE.SHOP, emis: 2, seed: rng.byte() });
+    { const [vx, vz] = P(pc + 9.5, sg * 5.5); ctx.interact('vend', vx, PT, vz, yaw(0, sg)); }
     for (let p = pa + 7; p < pb - 3; p += 14) {
       const [x, z] = P(p, sg * 5.5);
       ctx.world.light(x, PT + 4, z, white, 1.3, 14);

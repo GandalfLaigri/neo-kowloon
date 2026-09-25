@@ -25,6 +25,16 @@
       .brand span { color: var(--cyan); font-weight: 500; }
       #alt { margin-top: 6px; font-size: 14px; color: var(--ink); }
       #mode { font-size: 12px; color: var(--dim); margin-top: 2px; letter-spacing: 0.1em; }
+      #district { font-size: 12px; margin-top: 2px; letter-spacing: 0.14em; text-transform: uppercase; }
+      #carnet { font-size: 11px; margin-top: 6px; color: #c8ff4a; letter-spacing: 0.12em; opacity: 0.8; }
+      #journal { position: fixed; right: 24px; top: 70px; bottom: 80px; width: 380px; overflow-y: auto; background: rgba(8, 5, 16, 0.9); border: 1px solid rgba(200, 255, 74, 0.45); padding: 12px 16px; font-size: 13px; pointer-events: none; }
+      #journal h3 { margin: 0 0 6px; font-family: 'Orbitron', sans-serif; font-size: 12px; letter-spacing: 0.16em; color: #c8ff4a; font-weight: 500; }
+      #journal h4 { margin: 12px 0 4px; font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 0.14em; color: var(--cyan); font-weight: 500; }
+      #journal h4 em { font-style: normal; color: var(--dim); }
+      #journal .ok { color: var(--ink); padding: 2px 0; }
+      #journal .no { color: var(--dim); padding: 2px 0; }
+      #journal .no span { display: block; font-size: 11px; color: #6a6490; margin-left: 10px; }
+      #journal .foot { margin-top: 12px; font-size: 11px; color: var(--dim); }
       #cross { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255, 255, 255, 0.75); box-shadow: 0 0 6px var(--cyan); }
       #prompt { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); padding: 8px 16px; background: var(--bg); border: 1px solid rgba(0, 229, 255, 0.5); color: var(--cyan); font-size: 15px; letter-spacing: 0.06em; box-shadow: 0 0 18px rgba(0, 229, 255, 0.25); }
       #prompt:empty { display: none; }
@@ -77,6 +87,8 @@
         <div class="brand">NEO-KOWLOON <span>· SECTEUR 7</span></div>
         <div id="alt">ALT 0 m</div>
         <div id="mode">À PIED</div>
+        <div id="district"></div>
+        <div id="carnet"></div>
       </div>
       <div id="cross"></div>
       <div id="prompt"></div>
@@ -85,11 +97,12 @@
       <div id="help">
         <b>ZQSD / WASD</b> marcher · <b>Maj</b> courir · <b>Espace</b> sauter<br />
         <b>E</b> ascenseur · <b>1–9</b> choisir l'étage · <b>F</b> vol libre (<b>C</b> descendre) · <b>V</b> voiture volante<br />
-        <b>M</b> carte &amp; destinations · <b>R</b> retour au départ · <b>H</b> masquer l'aide · <b>Échap</b> menu
+        <b>M</b> carte &amp; destinations · <b>J</b> carnet · <b>R</b> retour au départ · <b>H</b> masquer l'aide · <b>Échap</b> menu
       </div>
       <div id="fps"></div>
       <div id="toast"></div>
     </div>
+    <div id="journal" class="hidden"></div>
     <canvas id="map" class="hidden" width="900" height="900"></canvas>
     <div id="dests" class="hidden"></div>
     <div id="menu">
@@ -104,6 +117,8 @@
           <b>F</b><span>vol libre (Espace monter · C descendre · Maj turbo)</span>
           <b>V</b><span>appeler la voiture volante, monter / descendre (près du sol)</span>
           <b>M</b><span>carte cliquable : choisir une destination pour s'y rendre</span>
+          <b>J</b><span>carnet d'exploration (quartiers, lieux, secrets à découvrir)</span>
+          <b>E</b><span>aussi : s'asseoir, acheter une canette, commander à manger</span>
           <b>Métro</b><span>montez à quai quand les portes sont ouvertes</span>
         </div>
         <button id="play" disabled>CHARGEMENT…</button>

@@ -52,6 +52,10 @@ export class Player {
   grounded = false;
   ground: DynBox | null = null;
   sensitivity = 0.0022;
+  /** Siège occupé (vue assise) : position de l'assise, cap (convention passants), niveau du sol. */
+  seat: { x: number; y: number; z: number; yaw: number; floor: number } | null = null;
+  /** Vitesse d'entraînement horizontale (escalators), remise à zéro chaque image par l'appelant. */
+  ext = new THREE.Vector3();
   private bob = 0;
   private bobAmp = 0;
 
@@ -64,6 +68,28 @@ export class Player {
     this.grounded = false;
     this.yaw = yaw;
     this.pitch = pitch;
+  }
+
+  sitAt(s: { x: number; y: number; z: number; yaw: number; floor: number }) {
+    this.seat = s;
+    this.vel.set(0, 0, 0);
+    this.yaw = s.yaw + Math.PI;
+    this.pitch = 0;
+    this.pos.set(s.x, s.y, s.z);
+  }
+
+  /** Se lève : devant le siège si possible, sinon sur les côtés. */
+  stand() {
+    const s = this.seat;
+    if (!s) return;
+    this.seat = null;
+    const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
+    for (const [dx, dz] of [[fx * 0.8, fz * 0.8], [fz * 0.8, -fx * 0.8], [-fz * 0.8, fx * 0.8], [-fx * 0.8, -fz * 0.8]]) {
+      if (!this.overlaps(s.x + dx, s.floor + 0.02, s.z + dz)) { this.pos.set(s.x + dx, s.floor + 0.02, s.z + dz); break; }
+    }
+    this.vel.set(0, 0, 0);
+    this.grounded = false;
+    this.ground = null;
   }
 
   toggleFly() {
@@ -84,6 +110,12 @@ export class Player {
     this.yaw -= input.dx * this.sensitivity;
     this.pitch -= input.dy * this.sensitivity;
     this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch));
+    if (this.seat) {
+      // assis : on regarde autour de soi ; un pas pour se lever
+      if (['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'Space'].some((k) => input.down(k))) this.stand();
+      this.bobAmp = 0;
+      return;
+    }
 
     const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
     const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
@@ -126,8 +158,8 @@ export class Player {
 
     const speed = run ? 8.5 : 4.3;
     const k = 1 - Math.exp(-dt * (this.grounded ? 12 : 2.5));
-    this.vel.x += (mx * speed - this.vel.x) * k;
-    this.vel.z += (mz * speed - this.vel.z) * k;
+    this.vel.x += (mx * speed + this.ext.x - this.vel.x) * k;
+    this.vel.z += (mz * speed + this.ext.z - this.vel.z) * k;
     this.vel.y -= GRAV * dt;
     if (this.vel.y < -60) this.vel.y = -60;
     if (this.grounded && input.down('Space')) {
@@ -215,6 +247,11 @@ export class Player {
   }
 
   applyCamera(cam: THREE.PerspectiveCamera) {
+    if (this.seat) {
+      cam.position.set(this.seat.x, this.seat.y + 0.8, this.seat.z);
+      cam.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+      return;
+    }
     const bobY = Math.sin(this.bob) * 0.045 * this.bobAmp;
     const bobX = Math.cos(this.bob * 0.5) * 0.03 * this.bobAmp;
     cam.position.set(this.pos.x + Math.cos(this.yaw) * bobX, this.pos.y + (this.fly ? 0 : EYE) + bobY, this.pos.z - Math.sin(this.yaw) * bobX);

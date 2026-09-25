@@ -26,6 +26,10 @@ export interface AudioFrame {
   engine: number;      // -1 : pas de voiture · 0..1 régime de la voiture volante
   radio: boolean;      // autoradio (club techno) pendant le pilotage
   bump: boolean;       // choc de la voiture contre un obstacle
+  district: string;    // quartier courant
+  water: number;       // proximité de l'eau (0..1)
+  blackout: boolean;   // le quartier du joueur est privé de courant
+  swarm: number;       // essaim de drones (0..1)
 }
 
 const NOTE = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
@@ -50,6 +54,8 @@ export class CityAudio {
   private chordAt = 0;
   private lastSteps = 0;
   private volume = 0.8;
+  private pluckAt = 0;
+  private hornAt = 30;
   private musicVol = 0.5;
 
   /** À appeler sur un geste de l'utilisateur (politique d'autoplay). */
@@ -97,6 +103,11 @@ export class CityAudio {
     this.layer('train', this.brownish(this.brown, 'lowpass', 140), this.master);
     this.layer('elev', this.brownish(this.brown, 'lowpass', 300), this.master);
     this.layer('blimp', this.drone([38, 57, 76]), this.outdoor);
+    this.layer('lap', this.brownish(this.brown, 'lowpass', 420), this.outdoor);
+    this.layer('swarm', this.brownish(this.white, 'bandpass', 950, 3), this.outdoor);
+    const lapLfo = ctx.createOscillator(); lapLfo.frequency.value = 0.35;
+    const lapG = ctx.createGain(); lapG.gain.value = 220;
+    lapLfo.connect(lapG).connect(this.layers.lap.f!.frequency); lapLfo.start();
     // modulation lente du vent
     const lfo = ctx.createOscillator();
     lfo.frequency.value = 0.07;
@@ -261,6 +272,86 @@ export class CityAudio {
     s.start(t0, Math.random() * 2); s.stop(t0 + dur + 0.05);
   }
 
+  // --- animaux, événements, interactions ---
+  private sweep(f0: number, f1: number, dur: number, gain: number, type: OscillatorType, when = 0, dest: AudioNode = this.outdoor, q = 0) {
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime + when;
+    const o = ctx.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(gain, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    let src: AudioNode = o;
+    if (q > 0) { const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = (f0 + f1) / 2; f.Q.value = q; o.connect(f); src = f; }
+    src.connect(g).connect(dest);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  private att(d: number, r = 12) { return 1 / (1 + (d / r) ** 2); }
+  bark(d: number) {
+    if (!this.ctx) return;
+    const a = this.att(d, 8);
+    for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
+      this.sweep(520, 230, 0.13, 0.22 * a, 'sawtooth', i * 0.32, this.outdoor, 3);
+      this.burst(0.08, 0.12 * a, 'bandpass', 900, 2, i * 0.32, this.outdoor);
+    }
+  }
+  squeak() {
+    if (!this.ctx) return;
+    for (let i = 0; i < 2; i++) this.sweep(2300, 3400, 0.07, 0.035, 'sine', i * 0.11);
+  }
+  caw(d: number) {
+    if (!this.ctx) return;
+    const a = this.att(d, 20);
+    for (let i = 0; i < 2; i++) this.sweep(420, 300, 0.28, 0.14 * a, 'sawtooth', i * 0.45, this.outdoor, 4);
+  }
+  flutter(d: number) {
+    if (!this.ctx) return;
+    const a = this.att(d, 6);
+    for (let i = 0; i < 9; i++) this.burst(0.05, 0.12 * a, 'bandpass', 1400 + Math.random() * 600, 1.2, i * 0.055 + Math.random() * 0.02, this.outdoor);
+  }
+  drum(d: number) {
+    if (!this.ctx) return;
+    const a = this.att(d, 25);
+    this.sweep(110, 55, 0.35, 0.5 * a, 'sine');
+    this.burst(0.06, 0.2 * a, 'lowpass', 300, 1);
+    if (Math.random() < 0.2) this.burst(0.5, 0.12 * a, 'highpass', 5000, 0.7, 0.01);
+  }
+  crackers(d: number) {
+    if (!this.ctx) return;
+    const a = this.att(d, 20);
+    for (let i = 0; i < 22; i++) this.burst(0.03, 0.35 * a, 'highpass', 1500 + Math.random() * 3000, 0.8, Math.random() * 1.1);
+  }
+  powerDown() {
+    if (!this.ctx) return;
+    this.burst(0.6, 0.5, 'lowpass', 160, 0.8);
+    this.sweep(120, 35, 1.6, 0.18, 'sawtooth', 0, this.master, 0);
+  }
+  powerUp() {
+    if (!this.ctx) return;
+    this.sweep(40, 120, 1.2, 0.15, 'sawtooth', 0, this.master, 0);
+    for (let i = 0; i < 4; i++) this.burst(0.05, 0.2, 'bandpass', 2500, 3, 0.3 + i * 0.15);
+  }
+  vend() {
+    if (!this.ctx) return;
+    this.blip(2600, 0.12, 0.05, 'triangle'); this.blip(3100, 0.12, 0.04, 'triangle', 0.08);
+    this.sweep(95, 110, 0.7, 0.06, 'sawtooth', 0.25, this.master, 2);
+    this.burst(0.15, 0.3, 'lowpass', 400, 1, 1.0);
+    this.blip(900, 0.08, 0.05, 'square', 1.25);
+  }
+  slurp() {
+    if (!this.ctx) return;
+    for (let i = 0; i < 3; i++) this.sweep(700, 2200, 0.35, 0.09, 'sawtooth', i * 0.5, this.master, 2);
+    for (let i = 0; i < 3; i++) this.blip(3200, 0.03, 0.04, 'square', 1.6 + i * 0.12);
+  }
+  discover() {
+    if (!this.ctx) return;
+    [72, 79, 84, 91].forEach((n, i) => this.blip(NOTE(n), 0.9, 0.08, 'triangle', i * 0.09, this.master));
+    [72, 79, 84, 91].forEach((n, i) => this.blip(NOTE(n), 1.2, 0.03, 'sine', i * 0.09, this.reverb));
+  }
+  sitDown() {
+    if (!this.ctx) return;
+    this.burst(0.12, 0.12, 'lowpass', 300, 1);
+  }
+
   thunder(dist: number) {
     if (!this.ctx) return;
     const ctx = this.ctx;
@@ -363,6 +454,24 @@ export class CityAudio {
     this.set('train', f.inTrain ? 0.25 + f.trainSpeed * 0.012 : 0.35 * Math.max(0, 1 - f.trainNear / 120) * Math.min(1, 0.2 + f.trainSpeed / 15));
     this.set('elev', f.inElevator && f.elevatorMoving ? 0.12 : 0);
     this.set('blimp', 0.1 / (1 + (f.blimp / 180) ** 2));
+    this.set('lap', 0.22 * f.water * (1 - indoor));
+    this.set('swarm', 0.05 * f.swarm);
+    if (f.blackout) this.set('neon', 0);
+    // ambiances de quartier : cithare pentatonique (quartier de Jade), corne de brume (docks)
+    if (indoor < 0.5 && f.altitude < 70) {
+      if (f.district === 'asia' && t > this.pluckAt) {
+        this.pluckAt = t + (Math.random() < 0.3 ? 0.9 : 0.42);
+        const scale = [62, 64, 67, 69, 71, 74, 76, 79];
+        const n = scale[Math.floor(Math.random() * scale.length)];
+        const g = 0.045 * this.musicVol * 2;
+        this.blip(NOTE(n), 1.1, g, 'triangle', 0, this.music);
+        this.blip(NOTE(n + 12), 0.4, g * 0.3, 'sine', 0, this.reverb);
+      }
+      if ((f.district === 'port' || f.water > 0.5) && t > this.hornAt) {
+        this.hornAt = t + 35 + Math.random() * 50;
+        if (this.hornAt > 40) for (const fr of [73, 110]) this.blip(fr, 3.2, 0.09, 'sawtooth', 0, this.outdoor);
+      }
+    }
 
     // voix mobiles : les sources les plus proches
     const right = new THREE.Vector3(-f.fwd.z, 0, f.fwd.x).normalize();

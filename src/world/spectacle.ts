@@ -139,6 +139,7 @@ export function placeDestinations(ctx: Ctx, towers: Tower[], plazas: Plaza[], me
       ctx.dest('Métro', `${st.name} · ${l.name}`, x, PT + 0.02, z, l.axis === 0 ? -Math.PI / 2 : Math.PI);
     }
   for (const b of basements) {
+    if (b.kind === 3) continue; // secret
     const S = b.stair;
     const ax = b.axis === 0;
     const top = b.dir > 0 ? (ax ? S.x0 : S.z0) : (ax ? S.x1 : S.z1);

@@ -92,7 +92,7 @@ export function decorateTerraces(ctx: Ctx, t: Tower) {
           ctx.box(sideRect(s, F, pa + 1.8, pa + 2.2, -w + 1.6, -w + 2.0), y + 0.4, y + 0.6, { color: WARM, style: STYLE.EMISSIVE, emis: 2, solid: false });
           const [lx, lz] = sidePoint(s, F, pa + 2, -w + 1.8);
           ctx.world.light(lx, y + 1.2, lz, WARM, 1.2, 8);
-          for (let k = 0; k < 3; k++) if (rng.chance(0.5)) { const [sx, sz] = sidePoint(s, F, pa + 0.8 + k * 1.2, -w + 0.5); ctx.sit(sx, y + 0.45, sz, Math.atan2(SV[s][0], SV[s][1])); }
+          for (let k = 0; k < 3; k++) { const [sx, sz] = sidePoint(s, F, pa + 0.8 + k * 1.2, -w + 0.5); ctx.seat(rng.chance(0.5), sx, y + 0.45, sz, Math.atan2(SV[s][0], SV[s][1])); }
           void lx; void lz;
         }
       }
@@ -177,7 +177,7 @@ export function decorateRoof(ctx: Ctx, t: Tower): boolean {
       const r = { x0: x, x1: x + 2, z0: z, z1: z + 0.6 };
       if (ctx.free(r, y + 0.2, y + 1)) {
         ctx.box(r, y, y + 0.45, { color: hex(0x5a3a22) });
-        if (rng.chance(0.6)) ctx.sit(x + rng.range(0.4, 1.6), y + 0.45, z + 0.3, 0);
+        ctx.seat(rng.chance(0.6), x + rng.range(0.4, 1.6), y + 0.45, z + 0.3, 0);
       }
     }
     stringLights(ctx, inner, y);
@@ -201,7 +201,7 @@ export function decorateRoof(ctx: Ctx, t: Tower): boolean {
       ctx.box({ x0: x + 1, x1: x + 2, z0: z + 1.3, z1: z + 2.1 }, y, y + 0.4, { color: stone });
       ctx.box({ x0: x + 1.4, x1: x + 1.6, z0: z + 1.6, z1: z + 1.8 }, y + 0.4, y + 0.6, { color: WARM, style: STYLE.EMISSIVE, emis: 2.2, solid: false });
       ctx.world.light(x + 1.5, y + 1.3, z + 1.7, WARM, 1.1, 8);
-      for (let k = 0; k < 3; k++) if (rng.chance(0.45)) ctx.sit(x + 0.6 + k * 0.9, y + 0.45, z + 0.5, 0);
+      for (let k = 0; k < 3; k++) ctx.seat(rng.chance(0.45), x + 0.6 + k * 0.9, y + 0.45, z + 0.5, 0);
     }
     stringLights(ctx, inner, y);
   }
@@ -230,7 +230,6 @@ function stringLights(ctx: Ctx, inner: Rect, y: number) {
 // ---------------------------------------------------------------------------
 // Rue : mobilier, crasse, vapeur
 // ---------------------------------------------------------------------------
-const LAMP_COLS: RGB[] = [hex(0xcfe8ff), hex(0x7fe9ff), hex(0xc58bff), hex(0xffa24a), hex(0xffa24a), hex(0xb8ffcf)];
 
 export function trashPile(ctx: Ctx, s: Side, F: number, a: number, o: number, y = 0.5) {
   const { rng } = ctx;
@@ -255,9 +254,11 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
       for (let a = a0 + 6; a < a1 - 5; a += 24) {
         const pole = sideRect(s, F, a, a + 0.5, -1, -0.5);
         if (!ctx.free(pole, 0.5, 8) || !ctx.free(sideRect(s, F, a - 0.25, a + 0.75, -1, 1.5), 6.5, 8)) continue;
-        const col = rng.pick(LAMP_COLS);
-        const faulty = rng.chance(0.22);
-        const dead = !faulty && rng.chance(0.08);
+        const [px, pz] = sidePoint(s, F, a, -1);
+        const LD = ctx.D(px, pz);
+        const col = rng.pick(LD.lamp);
+        const faulty = rng.chance(LD.faulty);
+        const dead = !faulty && rng.chance(LD.faulty * 0.4);
         ctx.box(pole, 0.5, 7.5, { color: hex(0x1c1e24) });
         ctx.box(sideRect(s, F, a, a + 0.5, -1, 1.5), 7.5, 7.75, { color: hex(0x1c1e24) });
         ctx.box(sideRect(s, F, a - 0.25, a + 0.75, 0.25, 1.5), 7.25, 7.5, { color: col, style: STYLE.EMISSIVE, emis: dead ? 0.1 : 4, extra: faulty ? 3 : 0, seed: rng.byte(), solid: false });
@@ -269,9 +270,9 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
         }
         const bin = sideRect(s, F, a + 1.0, a + 1.55, -1.05, -0.5);
         if (rng.chance(0.7) && ctx.free(bin, 0.5, 1.5)) {
-          ctx.box(bin, 0.5, 1.35, { color: rng.pick([hex(0x1f3a2a), hex(0x2a2a30), hex(0x3a2a20)]) });
+          ctx.box(bin, 0.5, 1.35, { color: LD.id === 'riche' ? hex(0x9a9ca4) : rng.pick([hex(0x1f3a2a), hex(0x2a2a30), hex(0x3a2a20)]) });
           ctx.box(inset(bin, -0.04), 1.35, 1.45, { color: hex(0x15161a) });
-          if (rng.chance(0.35)) trashPile(ctx, s, F, a + 1.8, -1.2);
+          if (rng.chance(0.45 * LD.trash)) trashPile(ctx, s, F, a + 1.8, -1.2);
         }
       }
       // distributeurs
@@ -282,6 +283,7 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
         ctx.box(sideRect(s, F, a, a + 1, -3.9, -3.1), 0.5, 2.5, { color: col, style: STYLE.SHOP, emis: 2.2, seed: rng.byte() });
         const [x, z] = sidePoint(s, F, a + 0.5, -2.2);
         ctx.world.light(x, 1.8, z, col, 0.9, 6);
+        ctx.interact('vend', x, 0.5, z, Math.atan2(-SV[s][0], -SV[s][1]));
       }
       // scooters garés, plantes en pot, sacs
       for (let i = 0, n = rng.int(0, 3); i < n; i++) {
@@ -302,7 +304,7 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
         ctx.box(r, 0.5, 1.0, { color: hex(0x5a3a2a) });
         ctx.box(inset(r, -0.1), 1.0, 1.0 + rng.pick([0.5, 0.75, 1.0]), { color: rng.pick(GREENS), style: STYLE.FOLIAGE, seed: rng.byte(), solid: false });
       }
-      if (rng.chance(0.35)) {
+      for (let k = 0, nt = rng.chance(ctx.D(...sidePoint(s, F, (a0 + a1) / 2, -2)).trash * 0.5) ? rng.int(1, 3) : 0; k < nt; k++) {
         const a = snap(rng.range(a0 + 5, a1 - 6));
         if (ctx.free(sideRect(s, F, a - 0.5, a + 1.5, -3.9, -2.9), 0.5, 1.2)) trashPile(ctx, s, F, a, -3.6);
       }
@@ -315,7 +317,7 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
           ctx.box(sideRect(s, F, a, a + 2.5, -3.95, -3.8), 0.95, 1.5, { color: hex(0x3a2e24) });
           const face = Math.atan2(SV[s][0], SV[s][1]);
           for (let k = 0; k < 3; k++)
-            if (rng.chance(0.45)) { const [x, z] = sidePoint(s, F, a + 0.45 + k * 0.8, -3.6); ctx.sit(x, 0.95, z, face); }
+            { const [x, z] = sidePoint(s, F, a + 0.45 + k * 0.8, -3.6); ctx.seat(rng.chance(0.45), x, 0.95, z, face); }
         }
       }
       if (rng.chance(0.4)) {
@@ -389,10 +391,15 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
           }
         }
       }
-      // chats errants qui arpentent la ruelle le long du mur
+      // chats errants et rats qui arpentent la ruelle le long du mur
       if (rng.chance(0.3)) {
         const [x0, z0] = sidePoint(s, F, a0 + 1, 0.35), [x1, z1] = sidePoint(s, F, a1 - 1, 0.35);
         ctx.peds.loops.push({ pts: [[x0, z0], [x1, z1]], y: 0.5, count: 1, cat: true });
+      }
+      const ratK = ctx.D(...sidePoint(s, F, (a0 + a1) / 2, 1)).trash;
+      if (rng.chance(0.25 + 0.35 * ratK)) {
+        const [x0, z0] = sidePoint(s, F, a0 + 0.5, 0.2), [x1, z1] = sidePoint(s, F, a1 - 0.5, 0.2);
+        ctx.animalLoop('rat', [[x0, z0], [x1, z1]], 0.5, rng.int(1, 2));
       }
       if (rng.chance(0.35)) {
         const a = snap(rng.range(a0 + 2, a1 - 3));
@@ -423,6 +430,7 @@ export function streetProps(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: Me
         ctx.box({ x0: x - 0.3, x1: x + 0.3, z0: z - 0.3, z1: z + 0.3 }, 1.0, 1.25, { color: hex(0xff6a1f), style: STYLE.EMISSIVE, emis: 5, extra: 3, seed: rng.byte(), solid: false });
         ctx.world.light(x, 1.8, z, hex(0xff7a30), 2.2, 11, rng.byte() + 1);
         ctx.world.emitSteam(x, 1.3, z, 0.8, 6, 12, hex(0x3a2a24));
+        if (rng.chance(0.4)) ctx.animal('dog', x - 0.5, 0, z + 1.6, rng.range(-3, 3), true);
         ctx.pose(x + 1.1, 0, z, -Math.PI / 2, 10);
         if (rng.chance(0.6)) ctx.pose(x - 1.1, 0, z, Math.PI / 2, 10);
       }

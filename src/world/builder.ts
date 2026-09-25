@@ -121,6 +121,7 @@ export interface LightSrc {
   r: number; g: number; b: number; // couleur * intensité
   radius: number;
   flicker?: number; // graine : lumière défaillante qui grésille
+  d?: number;       // quartier (coupures de courant)
 }
 
 /** Cône de lumière statique (sommet, direction, longueur, rayon de base). */

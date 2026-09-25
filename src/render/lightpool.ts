@@ -25,6 +25,9 @@ export class LightPool {
   private frame = 0;
   /** Distance à la source lumineuse la plus proche (pour le grésillement des néons). */
   nearestDist = 999;
+  /** Coupure : les sources du quartier blackId (champ d) sont multipliées par blackK. */
+  blackId = -1;
+  blackK = 1;
 
   add(list: LightSrc[]) {
     this.sources.push(...list);
@@ -50,7 +53,7 @@ export class LightPool {
       if (i < n) {
         const { l, d } = cand[i];
         const fade = THREE.MathUtils.clamp((dMax - d) / Math.max(8, dMax * 0.25), 0, 1);
-        const k = fade * GAIN * (l.flicker ? flicker(shared.uTime.value, l.flicker) : 1);
+        const k = fade * GAIN * (l.flicker ? flicker(shared.uTime.value, l.flicker) : 1) * (l.d === this.blackId && this.blackId >= 0 ? this.blackK : 1);
         P[i].set(l.x, l.y, l.z, l.radius);
         C[i].set(l.r * k, l.g * k, l.b * k);
       } else {

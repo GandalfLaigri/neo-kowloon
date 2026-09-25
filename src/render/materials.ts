@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import { CYCLE, GREEN, LUX_Y, NUM_PL } from '../config';
+import { BLOCKS, CYCLE, GREEN, HALF, LUX_Y, NUM_PL, PITCH } from '../config';
+
+/** Texture neutre en attendant la carte des quartiers (1 texel : quartier "centre"). */
+const neutralDistrict = (() => {
+  const t = new THREE.DataTexture(new Uint8Array([140, 128, 153, 0]), 1, 1, THREE.RGBAFormat);
+  t.needsUpdate = true;
+  return t;
+})();
 
 /** Uniformes partagés par tous les matériaux (mêmes objets => une seule mise à jour). */
 export const shared = {
@@ -13,7 +20,29 @@ export const shared = {
   uSkyRefl: { value: new THREE.Vector3(0.16, 0.09, 0.2) },
   uFlash: { value: 0 },                                   // éclair (0..1)
   uFlashCol: { value: new THREE.Vector3(0.55, 0.6, 0.85) },
+  /** Un texel par îlot : r crasse · g tags · b flaques · a identifiant du quartier (×32). */
+  uDistrict: { value: neutralDistrict as THREE.Texture },
+  /** Coupure de courant : quartier plongé dans le noir (-1 : aucun) et facteur d'éclairage restant. */
+  uBlackId: { value: -1 },
+  uBlackK: { value: 1 },
 };
+
+/** GLSL : lecture de la carte des quartiers. */
+export const GLSL_DISTRICT = /* glsl */ `
+uniform sampler2D uDistrict;
+uniform float uBlackId;
+uniform float uBlackK;
+vec4 districtAt(vec2 xz){ return texture2D(uDistrict, (xz + ${HALF.toFixed(1)}) / ${(2 * HALF).toFixed(1)}); }
+float districtId(vec2 xz){
+  ivec2 b = ivec2(clamp(floor((xz + ${HALF.toFixed(1)}) / ${PITCH.toFixed(1)}), 0.0, ${(BLOCKS - 1).toFixed(1)}));
+  return floor(texelFetch(uDistrict, b, 0).a * 255.0 / 32.0 + 0.5);
+}
+/** Facteur appliqué aux sources lumineuses statiques pendant une coupure de courant. */
+float blackout(vec3 wp){
+  if (uBlackId < 0.0) return 1.0;
+  return abs(districtId(wp.xz) - uBlackId) < 0.5 ? uBlackK : 1.0;
+}
+`;
 
 export const GLSL_COMMON = /* glsl */ `
 float h11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
@@ -96,6 +125,11 @@ vec3 pedPal(float t){
   return vec3(0.42, 1.0, 0.31);
 }
 #endif
+#ifdef BIRD
+uniform float uTime;
+attribute vec2 aPart;    // x : aile (-1 gauche, +1 droite, 0 corps), y : hauteur de l'articulation
+attribute vec4 aInst;    // phase, battement (0 posé, 1 vol, <1 plané)
+#endif
 #include <fog_pars_vertex>
 void main(){
   vec4 lp = vec4(position, 1.0);
@@ -154,6 +188,8 @@ void main(){
       else if (leg) ang = 0.0;
     } else if (pose > 9.5 && pose < 10.5) {
       if (arm) ang = -1.25 + 0.06 * sin(T * 15.0 + part * 2.0);
+    } else if (pose > 10.5 && pose < 11.5) {
+      if (arm) ang = -2.9 + 0.08 * sin(T * 3.4);                 // bras levés : porte une perche
     }
     float cs = cos(ang), sn = sin(ang);
     vec3 q = lp.xyz - vec3(0.0, py, 0.0);
@@ -170,6 +206,18 @@ void main(){
     }
     // le téléphone n'existe que dans la posture 5
     if (part > 4.5 && (pose < 4.5 || pose > 5.5)) lp.xyz = vec3(0.0);
+  #endif
+  #ifdef BIRD
+    if (abs(aPart.x) > 0.5) {
+      // ailes : battement en vol, repliées le long du corps une fois posé
+      float fl = aInst.y;
+      float ang = fl > 0.01 ? (0.2 + 0.9 * sin(uTime * 23.0 + aInst.x * 6.2831)) * fl : -1.3;
+      ang *= aPart.x;
+      vec3 q = lp.xyz - vec3(0.0, aPart.y, 0.0);
+      float c = cos(ang), s = sin(ang);
+      lp.xyz = vec3(q.x * c - q.y * s, q.x * s + q.y * c, q.z) + vec3(0.0, aPart.y, 0.0);
+      n = vec3(n.x * c - n.y * s, n.x * s + n.y * c, n.z);
+    }
   #endif
   #ifdef USE_INSTANCING
     lp = instanceMatrix * lp;
@@ -204,6 +252,7 @@ varying vec4 vFace;
 #include <fog_pars_fragment>
 ${GLSL_COMMON}
 ${GLSL_LIGHTING}
+${GLSL_DISTRICT}
 
 vec3 winPal(float h){
   if (h < 0.40) return vec3(1.0, 0.7, 0.4);
@@ -495,6 +544,20 @@ void main(){
       if (book && abs(fy - 0.1 - bh * 0.45) < 0.035 && h11(bi * 9.1 + row) > 0.45) albedo = vec3(0.62, 0.46, 0.14);
       albedo = mix(albedo, vec3(0.16, 0.1, 0.07), smoothstep(0.1, 0.4, px));
     }
+  } else if (style > 18.5 && style < 19.5) {
+    // Escalator : nez de marches striés qui défilent (extra : 0 -x · 1 +x · 2 -z · 3 +z), plinthes lumineuses
+    puddles = false;
+    albedo = vec3(0.1, 0.105, 0.12);
+    if (N.y > 0.5) {
+      float ax = extra > 1.5 ? vWP.z : vWP.x;
+      float sgn = (extra > 0.5 && extra < 1.5) || extra > 2.5 ? 1.0 : -1.0;
+      float s = fract(ax * 8.0 - uTime * 0.75 * 8.0 * sgn);
+      albedo = mix(vec3(0.05), vec3(0.32, 0.33, 0.36), step(0.5, s));
+      if (fract(ax * 2.5 - uTime * 0.75 * 2.5 * sgn) < 0.08) albedo = vec3(0.7, 0.6, 0.1);
+      wet = 0.4;
+    } else if (vFace.y > 0.0 && fract(vWP.y * 2.0) < 0.12) {
+      emission = vec3(0.3, 0.7, 1.0) * 0.6;
+    }
   } else if (style > 17.5 && style < 18.5) {
     // Grillage en losanges (découpé) ; au loin, tramé à 50 %
     puddles = false;
@@ -521,20 +584,24 @@ void main(){
   // --- Ambiance selon l'altitude --------------------------------------------
   bool mineral = style < 4.5 || (style > 7.5 && style < 8.5) || (style > 12.5 && style < 16.5);
   if (style < 0.5 && abs(extra - 9.0) < 0.5) mineral = false; // surfaces "propres" (sanctuaire)
+  vec4 dmap = districtAt(vWP.xz);
+  float grimeK = dmap.r / 0.55;   // 1 : centre · ~0,15 : quartier riche · ~1,8 : bas-fonds
+  float tagK = dmap.g / 0.5;
   if (mineral && abs(N.y) < 0.5) {
     // crasse et coulures près du sol (et dans les sous-sols), propreté en hauteur
-    float gh = 1.0 - smoothstep(3.0, 30.0, vWP.y);
+    float gh = (1.0 - smoothstep(3.0, 30.0, vWP.y)) * min(grimeK, 1.8);
     vec2 tq = vec2(dot(vWP.xz, vec2(-N.z, N.x)), vWP.y);
     float dirt = gh * (0.35 + 0.6 * vnoise(tq * vec2(0.6, 0.15)));
     float drip = smoothstep(0.55, 0.85, vnoise(vec2(tq.x * 3.0, tq.y * 0.25))) * (1.0 - smoothstep(10.0, 60.0, vWP.y));
-    albedo *= 1.0 - dirt * 0.55 - drip * 0.3;
+    drip *= min(grimeK, 1.5);
+    albedo *= max(0.2, 1.0 - dirt * 0.55 - drip * 0.3);
     albedo = mix(albedo, albedo * vec3(0.85, 0.78, 0.62), dirt);
     // graffitis pixelisés au pied des murs (rue et sous-sols)
     bool band = (vWP.y > 0.9 && vWP.y < 3.2) || (vWP.y > -5.6 && vWP.y < -3.3);
     if (band && far < 0.5) {
       vec2 gq = floor(tq / 0.25) * 0.25;
       float zone = h21(floor(gq / vec2(9.0, 40.0)) + 3.7);
-      if (zone > 0.45) {
+      if (zone > 1.0 - 0.55 * tagK) {
         float g = vnoise(gq * vec2(0.9, 1.3) + zone * 13.0) * 0.65 + vnoise(gq * 2.6) * 0.35;
         vec3 paint = neonPal(h21(floor(gq / 5.0)) * 2.0 + zone);
         if (g > 0.6) albedo = mix(albedo, paint * 0.55, 0.85);
@@ -543,7 +610,7 @@ void main(){
       // affiches collées, à moitié arrachées
       vec2 pc = floor(tq / vec2(1.3, 1.9));
       float pz = h21(pc + vec2(71.3, seed));
-      if (pz > 0.83 && vWP.y > 1.0 && vWP.y < 3.0) {
+      if (pz > 1.0 - 0.17 * tagK && vWP.y > 1.0 && vWP.y < 3.0) {
         vec2 pf = fract(tq / vec2(1.3, 1.9));
         vec2 m = abs(pf - 0.5);
         float torn = vnoise(tq * 7.0 + pz * 40.0);
@@ -569,12 +636,16 @@ void main(){
   }
 
   if (puddles && N.y > 0.5) {
-    float pud = smoothstep(0.52, 0.66, vnoise(vWP.xz * 0.18) * 0.7 + vnoise(vWP.xz * 0.6) * 0.3);
+    float p0 = 0.52 + (0.6 - dmap.b) * 0.3;
+    float pud = smoothstep(p0, p0 + 0.14, vnoise(vWP.xz * 0.18) * 0.7 + vnoise(vWP.xz * 0.6) * 0.3);
     wet = mix(wet, 1.0, pud);
     albedo *= 1.0 - 0.55 * pud;
     emission += uSkyRefl * (0.04 + 0.6 * fres) * wet * 0.5;
   }
 
+  #if !defined(USE_INSTANCING) && !defined(NO_BLACKOUT)
+    emission *= blackout(vWP);
+  #endif
   vec3 diff, spec;
   shade(vWP, N, V, wet, diff, spec);
   vec3 col = albedo * diff + spec * (1.0 - far * 0.5) + emission;
@@ -619,12 +690,14 @@ function makeUniforms() {
   };
 }
 
-export function createVoxelMaterial(): THREE.ShaderMaterial {
+/** dynamic : objets mobiles (rames, dirigeable…) épargnés par les coupures de courant. */
+export function createVoxelMaterial(dynamic = false): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
-    name: 'voxel',
+    name: dynamic ? 'voxel-dyn' : 'voxel',
     uniforms: makeUniforms(),
     vertexShader: VOXEL_VERT,
     fragmentShader: VOXEL_FRAG,
+    defines: dynamic ? { NO_BLACKOUT: '' } : {},
     fog: true,
   });
   return m;
@@ -638,6 +711,18 @@ export function createPedMaterial(): THREE.ShaderMaterial {
     vertexShader: VOXEL_VERT,
     fragmentShader: VOXEL_FRAG,
     defines: { PED: '' },
+    fog: true,
+  });
+}
+
+/** Oiseaux (ailes articulées dans le vertex shader). */
+export function createBirdMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    name: 'bird',
+    uniforms: makeUniforms(),
+    vertexShader: VOXEL_VERT,
+    fragmentShader: VOXEL_FRAG,
+    defines: { BIRD: '' },
     fog: true,
   });
 }

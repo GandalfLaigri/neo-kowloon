@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Cone } from '../world/builder';
-import { GLSL_COMMON, shared } from './materials';
+import { GLSL_COMMON, GLSL_DISTRICT, shared } from './materials';
 
 const VERT = /* glsl */ `
 attribute float aFlick;
@@ -34,6 +34,7 @@ varying vec3 vC;
 varying float vFlick;
 varying float vDepth;
 ${GLSL_COMMON}
+${GLSL_DISTRICT}
 void main(){
   vec3 V = normalize(cameraPosition - vWP);
   float edge = pow(abs(dot(normalize(vN), V)), 1.4);
@@ -44,6 +45,9 @@ void main(){
   float k = 1.0;
   if (vFlick > 0.5) { float tt = floor(uTime * 14.0); k = h21(vec2(tt, vFlick)) > 0.1 ? 1.0 : 0.08; }
   float fog = exp(-uFog * uFog * vDepth * vDepth);
+  #ifdef STATIC
+    k *= blackout(vWP);
+  #endif
   gl_FragColor = vec4(vC * edge * along * dust * k * fog, 1.0);
 }
 `;
@@ -73,7 +77,7 @@ export class Beams {
 
   constructor(cones: Cone[], maxDynamic = 160) {
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: shared.uTime, uFog: { value: 0.004 } },
+      uniforms: { uTime: shared.uTime, uFog: { value: 0.004 }, uDistrict: shared.uDistrict, uBlackId: shared.uBlackId, uBlackK: shared.uBlackK },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -86,7 +90,10 @@ export class Beams {
     const sgeo = geo.clone();
     const flick = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, cones.length)), 1);
     sgeo.setAttribute('aFlick', flick);
-    const stat = new THREE.InstancedMesh(sgeo, this.mat, Math.max(1, cones.length));
+    const statMat = this.mat.clone();
+    statMat.uniforms = this.mat.uniforms;
+    statMat.defines = { STATIC: '' };
+    const stat = new THREE.InstancedMesh(sgeo, statMat, Math.max(1, cones.length));
     cones.forEach((k, i) => {
       this.compose(k.x, k.y, k.z, k.dx, k.dy, k.dz, k.len, k.radius);
       stat.setMatrixAt(i, this.m);

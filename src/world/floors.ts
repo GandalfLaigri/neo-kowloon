@@ -114,8 +114,8 @@ export function buildFloor(ctx: Ctx, t: Tower, f: Floor, along: number) {
         ctx.box(sofa, y, y + 0.45, { color: velvet });
         ctx.box(R(0, 3, -(depth - 0.2), -(depth - 0.45)), y + 0.45, y + 1.0, { color: velvet });
         ctx.box(R(1, 2, -(depth - 1.6), -(depth - 2.4)), y, y + 0.4, { color: lux ? hex(0xe8e4dc) : hex(0x5a3a22) });
-        if (rng.chance(0.6)) { const [x, z] = sidePoint(s, F, a + 0.8, -(depth - 0.7)); ctx.sit(x, y + 0.45, z, face(s)); }
-        if (rng.chance(0.4)) { const [x, z] = sidePoint(s, F, a + 2.2, -(depth - 0.7)); ctx.sit(x, y + 0.45, z, face(s)); }
+        { const [x, z] = sidePoint(s, F, a + 0.8, -(depth - 0.7)); ctx.seat(rng.chance(0.6), x, y + 0.45, z, face(s)); }
+        { const [x, z] = sidePoint(s, F, a + 2.2, -(depth - 0.7)); ctx.seat(rng.chance(0.4), x, y + 0.45, z, face(s)); }
         const [lx, lz] = sidePoint(s, F, a + 1.5, -(depth - 1.5));
         ctx.world.light(lx, y + 2.6, lz, WARM, 1.2, 9);
       } else if (roll < 0.5) {
@@ -169,7 +169,7 @@ export function buildFloor(ctx: Ctx, t: Tower, f: Floor, along: number) {
         ctx.world.light(x, y + 1.8, z, hex(0xff7a30), 2.2, 11, rng.byte() + 1);
         ctx.world.emitSteam(x, y + 1.3, z, 0.7, 3, 10, hex(0x3a2a24));
         ctx.smoker(x + 1.1, y, z, -Math.PI / 2);
-        if (rng.chance(0.6)) ctx.sit(x - 1.1, y + 0.3, z, Math.PI / 2);
+        ctx.seat(rng.chance(0.6), x - 1.1, y + 0.3, z, Math.PI / 2);
       }
     }
   }
@@ -185,7 +185,7 @@ export function buildFloor(ctx: Ctx, t: Tower, f: Floor, along: number) {
           for (const sg of [-1, 1]) {
             const cx = cxm - 1.2 + i * 1.2, cz = czm + sg * 1.05;
             ctx.box({ x0: cx - 0.22, x1: cx + 0.22, z0: cz - 0.22, z1: cz + 0.22 }, y, y + 0.45, { color: hex(0x2a2a30) });
-            if (rng.chance(0.4)) ctx.sit(cx, y + 0.45, cz, sg > 0 ? Math.PI : 0);
+            ctx.seat(rng.chance(0.4), cx, y + 0.45, cz, sg > 0 ? Math.PI : 0);
           }
         ctx.box({ x0: cxm - 0.5, x1: cxm + 0.5, z0: czm - 0.2, z1: czm + 0.2 }, top - 1.4, top - 1.2, { color: WARM, style: STYLE.EMISSIVE, emis: 2.5, solid: false });
         ctx.world.light(cxm, top - 1.6, czm, WARM, 1.4, 10);

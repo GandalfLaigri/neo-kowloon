@@ -14,7 +14,7 @@ export interface Basement {
   name: string;
 }
 
-const NAMES = [['Club Yami', 'Club Oni-bi', 'Club Kage'], ['Marché noir', 'Bazar souterrain', 'Ruelle des puces'], ['Parking P-3', 'Niveau technique', 'Tunnel de service']];
+const NAMES = [['Club Yami', 'Club Oni-bi', 'Club Kage'], ['Marché noir', 'Bazar souterrain', 'Ruelle des puces'], ['Parking P-3', 'Niveau technique', 'Tunnel de service'], ['Le Lotus Noir']];
 
 export interface Plaza { rect: Rect; streetSides: Side[] }
 
@@ -67,7 +67,7 @@ export function buildBasement(ctx: Ctx, b: Basement) {
   const { rng } = ctx;
   const B = b.rect, S = b.stair, FY = BASE_FLOOR;
   const concrete = hex(0x2b2a2e);
-  const kindCol: RGB[][] = [[hex(0xff2a9d), hex(0x00e5ff)], [hex(0xff6a1f), hex(0xffb000)], [hex(0xb8ffcf), hex(0xffa24a)]];
+  const kindCol: RGB[][] = [[hex(0xff2a9d), hex(0x00e5ff)], [hex(0xff6a1f), hex(0xffb000)], [hex(0xb8ffcf), hex(0xffa24a)], [hex(0xff3020), hex(0xffa050)]];
   const [c1, c2] = kindCol[b.kind];
 
   // dalle, murs, plafond (percé au-dessus de l'escalier)
@@ -102,7 +102,11 @@ export function buildBasement(ctx: Ctx, b: Basement) {
   ctx.reserve(Rl(top - b.dir * 2.5, bot, W0 - 1, W1 + 1), 0.5, 4);
   // enseigne verticale à l'entrée
   const sign = Rl(top - b.dir * 0.6, top - b.dir * 1.1, W1 + 0.2, W1 + 2.7);
-  if (ctx.free(sign, 0.5, 6.5)) {
+  if (b.kind === 3) {
+    // bar clandestin : pas d'enseigne, juste une lanterne rouge
+    const [lx, lz] = [(sign.x0 + sign.x1) / 2, (sign.z0 + sign.z1) / 2];
+    ctx.box({ x0: lx - 0.2, x1: lx + 0.2, z0: lz - 0.2, z1: lz + 0.2 }, 2.6, 3.1, { color: hex(0xff3020), style: STYLE.EMISSIVE, emis: 3, extra: 2, seed: rng.byte(), solid: false });
+  } else if (ctx.free(sign, 0.5, 6.5)) {
     ctx.box(Rl(top - b.dir * 0.7, top - b.dir * 1.0, W1 + 0.3, W1 + 0.6), 0.5, 3, { color: hex(0x1d1f24) });
     ctx.box(sign, 3, 6, { color: c1, style: STYLE.SIGN, emis: 2.6, seed: rng.byte(), extra: 1 });
   }
@@ -185,6 +189,39 @@ export function buildBasement(ctx: Ctx, b: Basement) {
       const r = { x0: x, x1: x + 1, z0: z, z1: z + 1 };
       if (free(r, 1)) ctx.box(r, FY, FY + rng.pick([0.5, 1, 1.5]), { color: rng.pick([hex(0x6a4a2a), hex(0x4a5a3a)]) });
     }
+  } else if (b.kind === 3) {
+    // Le Lotus Noir : comptoir, bouteilles lumineuses, piano, lampes tamisées, habitués
+    const warm = hex(0xffa050);
+    const bar = { x0: B.x0 + 1, x1: B.x0 + 2, z0: B.z0 + 3, z1: B.z1 - 3 };
+    if (free(bar, 1.2)) {
+      ctx.box(bar, FY, FY + 1.1, { color: hex(0x3a1a10) });
+      ctx.box({ ...bar, x0: bar.x1, x1: bar.x1 + 0.06 }, FY + 0.95, FY + 1.05, { color: warm, style: STYLE.EMISSIVE, emis: 1.4, solid: false });
+      for (let z = bar.z0 + 0.3; z < bar.z1 - 0.3; z += 0.35)
+        for (const y of [1.5, 2.1, 2.7])
+          if (rng.chance(0.75)) ctx.box({ x0: B.x0 + 0.55, x1: B.x0 + 0.75, z0: z, z1: z + 0.2 }, FY + y, FY + y + rng.pick([0.3, 0.4]), { color: rng.pick([hex(0x40c060), hex(0xffa040), hex(0xc03030), hex(0x6080ff), hex(0xe0e0c0)]), style: STYLE.EMISSIVE, emis: 0.8, solid: false });
+      ctx.pose(B.x0 + 0.9, FY, (bar.z0 + bar.z1) / 2, Math.PI / 2, 4);
+      for (let z = bar.z0 + 0.8; z < bar.z1 - 0.5; z += 1.3) {
+        ctx.box({ x0: bar.x1 + 0.5, x1: bar.x1 + 0.9, z0: z - 0.2, z1: z + 0.2 }, FY, FY + 0.8, { color: hex(0x2a1a14) });
+        if (rng.chance(0.6)) ctx.sit(bar.x1 + 0.7, FY + 0.8, z, -Math.PI / 2, 8);
+        else ctx.interact('seat', bar.x1 + 0.7, FY + 0.8, z, -Math.PI / 2, FY);
+      }
+    }
+    const cx = (B.x0 + B.x1) / 2 + 2, cz = (B.z0 + B.z1) / 2;
+    for (const [dx, dz] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) {
+      const x = cx + dx, z = cz + dz;
+      if (!free({ x0: x - 1.2, x1: x + 1.2, z0: z - 1.2, z1: z + 1.2 }, 1.2)) continue;
+      ctx.box({ x0: x - 0.5, x1: x + 0.5, z0: z - 0.5, z1: z + 0.5 }, FY, FY + 0.75, { color: hex(0x2a1a14) });
+      ctx.box({ x0: x - 0.06, x1: x + 0.06, z0: z - 0.06, z1: z + 0.06 }, FY + 0.75, FY + 0.9, { color: warm, style: STYLE.EMISSIVE, emis: 3, extra: 3, seed: rng.byte(), solid: false });
+      ctx.world.light(x, FY + 1.2, z, warm, 0.8, 5, rng.byte() + 1);
+      for (const s of [-1, 1]) if (rng.chance(0.6)) ctx.sit(x + s * 0.9, FY + 0.45, z, s > 0 ? -Math.PI / 2 : Math.PI / 2, 8);
+    }
+    const pn = { x0: B.x1 - 3.5, x1: B.x1 - 1.3, z0: cz - 1, z1: cz + 0.6 };
+    if (free(pn, 1.2)) {
+      ctx.box(pn, FY + 0.6, FY + 1.0, { color: hex(0x0a0a0c) });
+      ctx.box({ x0: pn.x0 + 0.2, x1: pn.x0 + 0.4, z0: pn.z0 + 0.2, z1: pn.z0 + 0.4 }, FY, FY + 0.6, { color: hex(0x0a0a0c) });
+      ctx.sit(pn.x0 - 0.5, FY + 0.5, cz - 0.2, Math.PI / 2, 7);
+    }
+    ctx.world.light(cx, FY + 2.6, cz, warm, 1.4, 12);
   } else {
     // Parking désaffecté : épaves, fût enflammé, flaques, détritus
     for (let i = 0; i < 8; i++) {

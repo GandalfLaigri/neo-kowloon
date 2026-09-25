@@ -96,11 +96,54 @@ function variants(): THREE.BufferGeometry[] {
       b.box(x, 0, z, x + 0.05, CAT_HIP, z + 0.06, W, p, STYLE.SOLID, 0, 1, CAT_HIP);
     out.push(b.build());
   }
+  // 4 : rat (queue nue, yeux rouges)
+  {
+    const b = new PedBuilder();
+    const pink = hex(0xb07a78);
+    b.box(-0.05, 0.03, -0.1, 0.05, 0.11, 0.1, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.035, 0.05, 0.1, 0.035, 0.1, 0.17, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.012, 0.06, 0.17, 0.012, 0.08, 0.19, pink, 0);
+    b.box(-0.045, 0.1, 0.11, -0.02, 0.13, 0.13, pink, 0);
+    b.box(0.02, 0.1, 0.11, 0.045, 0.13, 0.13, pink, 0);
+    b.box(-0.03, 0.085, 0.165, -0.016, 0.095, 0.172, hex(0xff2a2a), 0, STYLE.EMISSIVE, 2);
+    b.box(0.016, 0.085, 0.165, 0.03, 0.095, 0.172, hex(0xff2a2a), 0, STYLE.EMISSIVE, 2);
+    b.box(-0.008, 0.04, -0.34, 0.008, 0.055, -0.1, pink, 0);
+    for (const [x, z, p] of [[-0.05, 0.05, 1], [0.03, 0.05, 2], [-0.05, -0.08, 2], [0.03, -0.08, 1]] as const)
+      b.box(x, 0, z, x + 0.02, 0.05, z + 0.03, W, p, STYLE.SOLID, 0, 1, 0.05);
+    out.push(b.build());
+  }
+  // 5 : chien errant
+  {
+    const b = new PedBuilder();
+    b.box(-0.13, 0.36, -0.36, 0.13, 0.62, 0.3, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.12, 0.34, 0.2, 0.12, 0.64, 0.34, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.1, 0.55, 0.3, 0.1, 0.78, 0.5, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.06, 0.55, 0.5, 0.06, 0.66, 0.62, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.025, 0.62, 0.61, 0.025, 0.66, 0.635, hex(0x111111), 0);
+    b.box(-0.1, 0.78, 0.33, -0.05, 0.86, 0.4, W, 0, STYLE.SOLID, 0, 1);
+    b.box(0.05, 0.78, 0.33, 0.1, 0.86, 0.4, W, 0, STYLE.SOLID, 0, 1);
+    b.box(-0.07, 0.69, 0.5, -0.04, 0.72, 0.505, hex(0xc8ff9a), 0, STYLE.EMISSIVE, 1.2);
+    b.box(0.04, 0.69, 0.5, 0.07, 0.72, 0.505, hex(0xc8ff9a), 0, STYLE.EMISSIVE, 1.2);
+    b.box(-0.025, 0.56, -0.52, 0.025, 0.62, -0.36, W, 0, STYLE.SOLID, 0, 1);
+    for (const [x, z, p] of [[-0.11, 0.16, 1], [0.05, 0.16, 2], [-0.11, -0.3, 2], [0.05, -0.3, 1]] as const)
+      b.box(x, 0, z, x + 0.06, 0.4, z + 0.07, W, p, STYLE.SOLID, 0, 1, 0.4);
+    out.push(b.build());
+  }
   return out;
+}
+
+/** Géométrie d'une variante de personnage (défilés, événements). */
+export function pedGeometry(v: number): THREE.BufferGeometry {
+  return variants()[v];
 }
 
 const COATS = [0x1a1a1e, 0x2a2a30, 0x1a2238, 0x4a1a22, 0x3a3a24, 0x8a7a5a, 0x2a1a1a, 0x303848, 0xd0d0d0, 0xc8b020, 0xb03070];
 const FURS = [0x111111, 0x1a1a1a, 0xb86a2a, 0x6a6a6a, 0xd8d0c0, 0x5a4030];
+const RAT = [0x4a4440, 0x3a3430, 0x5a5048, 0x2e2a28];
+const DOG = [0x8a6a3a, 0x2a2420, 0xc8b8a0, 0x5a4a3a, 0x1a1a1a, 0x9a8a70];
+/** Variante de géométrie : 3 chat · 4 rat · 5 chien. */
+const ANIMAL_V = { cat: 3, rat: 4, dog: 5 } as const;
+const isAnimal = (v: number) => v >= 3;
 
 interface Path { pts: [number, number][]; cum: number[]; len: number; closed: boolean; y: number }
 
@@ -120,6 +163,7 @@ interface Walker {
   hold: number;    // durée d'arrêt restante
   turn: number;    // orientation pendant l'arrêt (regarde un étal, une vitrine)
   look: number;    // rotation courante (lissée)
+  flee: number;    // rat qui détale (temps restant)
 }
 
 interface Idle { v: number; i: number; x: number; y: number; z: number; yaw: number; cur: number; pose: number; scale: number; ph: number; turns: boolean }
@@ -160,6 +204,10 @@ export class Pedestrians {
   private crossers: Crosser[] = [];
   private riders: { v: number; i: number; obj: THREE.Object3D; local: THREE.Matrix4; pose: number }[] = [];
   private rng: RNG;
+  /** Distance au chien le plus proche du joueur (aboiements). */
+  dogNear = 99;
+  /** Un rat vient de détaler près du joueur (couinement). */
+  ratScared = false;
   private m = new THREE.Matrix4();
   private m2 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
@@ -185,33 +233,36 @@ export class Pedestrians {
       }
       return { pts, cum, len: cum[cum.length - 1], closed, y };
     };
-    const counts = [0, 0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0];
     const addWalker = (path: Path, v: number, pauseMean = 0) => {
-      const cat = v === 3;
+      const cat = isAnimal(v);
       // un passant sur huit marche les yeux rivés sur son téléphone (jamais avec un parapluie)
       const phone = !cat && v !== 1 && rng.chance(0.14);
       this.walkers.push({
         v, i: counts[v]++, path, s: rng.range(0, path.len * (path.closed ? 1 : 2)),
-        dir: rng.chance(0.5) ? 1 : -1, speed: cat ? rng.range(0.5, 1.1) : phone ? rng.range(0.8, 1.15) : rng.range(1.0, 1.6), paused: false,
-        scale: cat ? rng.range(0.85, 1.15) : rng.range(0.92, 1.08), off: rng.range(-0.6, 0.6),
-        pose: phone ? 5 : 0, pauseMean, next: pauseMean * rng.range(0.2, 1.5), hold: 0, turn: 0, look: 0,
+        dir: rng.chance(0.5) ? 1 : -1,
+        speed: v === 4 ? rng.range(1.2, 2.2) : v === 5 ? rng.range(0.9, 1.4) : cat ? rng.range(0.5, 1.1) : phone ? rng.range(0.8, 1.15) : rng.range(1.0, 1.6), paused: false,
+        scale: cat ? rng.range(0.85, 1.15) : rng.range(0.92, 1.08), off: cat ? rng.range(-0.15, 0.15) : rng.range(-0.6, 0.6),
+        pose: phone ? 5 : 0, pauseMean, next: pauseMean * rng.range(0.2, 1.5), hold: 0, turn: 0, look: 0, flee: 0,
       });
     };
     for (const l of defs.loops) {
       const path = mkPath(l.pts, true, l.y);
-      for (let k = 0; k < l.count; k++) addWalker(path, l.cat ? 3 : pickVariant(l.y), l.cat ? 0 : l.pause ?? 0);
+      const an = l.animal ?? (l.cat ? 'cat' : null);
+      for (let k = 0; k < l.count; k++) addWalker(path, an ? ANIMAL_V[an] : pickVariant(l.y), an === 'rat' ? 2.5 : an === 'dog' ? 9 : an ? 0 : l.pause ?? 0);
     }
     for (const l of defs.lines) {
       const path = mkPath([[l.x0, l.z0], [l.x1, l.z1]], false, l.y);
       for (let k = 0; k < l.count; k++) addWalker(path, pickVariant(l.y, l.pause ? rng.chance(0.35) : undefined), l.pause ?? 0);
     }
     for (const d of defs.idle) {
-      const v = d.cat ? 3 : pickVariant(d.y, d.pose ? false : d.umbrella);
+      const an = d.animal ?? (d.cat ? 'cat' : null);
+      const v = an ? ANIMAL_V[an] : pickVariant(d.y, d.pose ? false : d.umbrella);
       const pose = d.pose ?? 0;
-      const y = SEATED(pose) ? (d.cat ? d.y - 0.17 : d.y - 0.76) : d.y;
+      const y = SEATED(pose) ? (an === 'cat' ? d.y - 0.17 : an === 'dog' ? d.y - 0.3 : an === 'rat' ? d.y - 0.04 : d.y - 0.76) : d.y;
       this.idles.push({
         v, i: counts[v]++, x: d.x, y, z: d.z, yaw: d.yaw, cur: d.yaw, pose, ph: rng.range(0, 100),
-        scale: d.cat ? rng.range(0.85, 1.15) : rng.range(0.94, 1.06), turns: TURNS(pose) || pose === 4,
+        scale: an ? rng.range(0.85, 1.15) : rng.range(0.94, 1.06), turns: TURNS(pose) || pose === 4,
       });
     }
     for (const c of defs.cross) {
@@ -244,7 +295,7 @@ export class Pedestrians {
       g.setAttribute('aInst', attr);
       for (let i = 0; i < n; i++) {
         attr.setXYZW(i, rng.next(), 1, rng.next(), 0);
-        c.setHex(v === 3 ? rng.pick(FURS) : rng.chance(0.85) ? rng.pick(COATS.slice(0, 8)) : rng.pick(COATS));
+        c.setHex(v === 3 ? rng.pick(FURS) : v === 4 ? rng.pick(RAT) : v === 5 ? rng.pick(DOG) : rng.chance(0.85) ? rng.pick(COATS.slice(0, 8)) : rng.pick(COATS));
         mesh.setColorAt(i, c);
       }
       mesh.count = counts[v];
@@ -284,7 +335,7 @@ export class Pedestrians {
     let n = 0;
     const r2 = r * r;
     for (const w of this.walkers) {
-      if (w.v === 3) continue;
+      if (isAnimal(w.v)) continue;
       this.meshes[w.v].getMatrixAt(w.i, this.m);
       const e = this.m.elements;
       const dx = e[12] - p.x, dy = e[13] - p.y, dz = e[14] - p.z;
@@ -303,6 +354,8 @@ export class Pedestrians {
 
   update(dt: number, player: THREE.Vector3, t: number) {
     const rng = this.rng;
+    this.dogNear = 99;
+    this.ratScared = false;
     // ---- Marcheurs : trottoirs, ruelles, passerelles, allées de marché ----
     for (const w of this.walkers) {
       const P = w.path;
@@ -322,7 +375,23 @@ export class Pedestrians {
       // s'arrête si le joueur lui barre la route
       const px = player.x - x, pz = player.z - z;
       const ahead = px * hx + pz * hz;
-      const blocked = Math.abs(player.y - P.y) < 1.5 && ahead > 0 && ahead < 1.4 && Math.abs(px * hz - pz * hx) < 0.7;
+      let blocked = Math.abs(player.y - P.y) < 1.5 && ahead > 0 && ahead < 1.4 && Math.abs(px * hz - pz * hx) < 0.7;
+      const near = Math.abs(player.y - P.y) < 2.5 ? Math.hypot(px, pz) : 99;
+      if (w.v === 4) {
+        // rat : détale à l'approche du joueur, dans la direction opposée
+        if (near < 3.5 && w.flee <= 0) {
+          w.flee = 2;
+          w.hold = 0;
+          if (ahead > 0) w.dir = w.dir > 0 ? -1 : 1;
+          if (near < 5) this.ratScared = true;
+        }
+        blocked = false;
+      } else if (w.v === 5) {
+        // chien : s'arrête et fixe le joueur qui s'approche
+        if (near < this.dogNear) this.dogNear = near;
+        if (near < 5) { w.hold = Math.max(w.hold, 0.8); let a = Math.atan2(px, pz) - Math.atan2(hx, hz); w.turn = Math.atan2(Math.sin(a), Math.cos(a)); }
+      }
+      if (w.flee > 0) w.flee -= dt;
       w.paused = blocked;
       // arrêts spontanés : regarder un étal, une vitrine, puis repartir (parfois en sens inverse)
       if (w.pauseMean > 0) {
@@ -339,7 +408,7 @@ export class Pedestrians {
       }
       const holding = w.hold > 0;
       this.setWalk(w.v, w.i, !blocked && !holding);
-      if (!blocked && !holding) w.s += w.dir * w.speed * dt;
+      if (!blocked && !holding) w.s += w.dir * w.speed * (w.flee > 0 ? 3 : 1) * dt;
       w.look += ((holding ? w.turn : 0) - w.look) * Math.min(1, dt * 3);
       this.q.setFromAxisAngle(this.up, Math.atan2(hx, hz) + w.look);
       this.m.compose(this.p.set(x, P.y, z), this.q, this.sc.setScalar(w.scale));
@@ -354,7 +423,8 @@ export class Pedestrians {
       if (d2 > 45 * 45 || Math.abs(dy) > 6) continue;
       const sway = s.pose === 4 ? 0.55 * Math.sin(t * 0.17 + s.ph) + 0.25 * Math.sin(t * 0.43 + s.ph * 2) : 0.3 * Math.sin(t * 0.21 + s.ph) + 0.18 * Math.sin(t * 0.57 + s.ph * 3);
       let target = s.yaw + sway;
-      if (d2 < 16 && s.v !== 3) {
+      if (s.v === 5 && d2 < this.dogNear * this.dogNear) this.dogNear = Math.sqrt(d2);
+      if (d2 < 16 && (s.v < 3 || s.v === 5)) {
         // le joueur approche : on le dévisage
         const toP = Math.atan2(dx, dz);
         let dd = toP - target;

@@ -1,4 +1,5 @@
-import { HALF, STRATUM } from './config';
+import { BLOCKS, HALF, PITCH, STRATUM } from './config';
+import { DISTRICTS, DISTRICT_IDS } from './world/districts';
 import type { ElevContext } from './elevators';
 import type { MetroContext } from './metro';
 import type { City } from './world/city';
@@ -23,6 +24,12 @@ export class Hud {
   private acc = 0;
 
   private train = $('train');
+  private district = $('district');
+
+  setDistrict(name: string, color: string) {
+    this.district.textContent = name;
+    this.district.style.color = color;
+  }
   private lastTrainKey = '';
 
   setMetro(ctx: MetroContext): string {
@@ -120,7 +127,7 @@ export class Hud {
 /** Couleurs des catégories de destinations. */
 const CAT_COLS: Record<string, string> = {
   'Métro': '#ffb000', 'Sous-sols': '#ffe14a', 'Toits': '#ffd6a0', 'Étages': '#e8f4ff', 'Bars': '#ff5fb0',
-  'Marchés': '#ff8a40', 'Points de vue': '#00e5ff', 'Héliports': '#40ffb0', 'Scènes': '#ff3b3b', 'Lieux uniques': '#c8ff4a',
+  'Marchés': '#ff8a40', 'Points de vue': '#00e5ff', 'Héliports': '#40ffb0', 'Scènes': '#ff3b3b', 'Lieux uniques': '#c8ff4a', 'Port': '#4aa0d0',
 };
 
 /** Carte du quartier (touche M) : lecture seule en jeu, cliquable pour se téléporter. */
@@ -146,6 +153,15 @@ export class MapView {
     g.fillRect(0, 0, S, S);
     g.fillStyle = '#15121f';
     g.fillRect(X(-HALF), X(-HALF), (HALF * 2) * k, (HALF * 2) * k);
+    // quartiers : teinte de fond par îlot
+    for (let bi = 0; bi < BLOCKS; bi++)
+      for (let bj = 0; bj < BLOCKS; bj++) {
+        const D = DISTRICTS[city.districts.grid[bi * BLOCKS + bj]];
+        g.fillStyle = D.map;
+        g.globalAlpha = 0.16;
+        g.fillRect(X(-HALF + bi * PITCH), X(-HALF + bj * PITCH), PITCH * k, PITCH * k);
+        g.globalAlpha = 1;
+      }
     for (const { rect: p } of city.plazas) {
       g.fillStyle = 'rgba(255,150,40,0.25)';
       g.fillRect(X(p.x0), X(p.z0), (p.x1 - p.x0) * k, (p.z1 - p.z0) * k);
@@ -168,6 +184,34 @@ export class MapView {
       g.globalAlpha = 0.55;
       g.fillRect(X(r.x0), X(r.z0), (r.x1 - r.x0) * k, (r.z1 - r.z0) * k);
       g.globalAlpha = 1;
+    }
+    if (city.subway) {
+      const l = city.subway.line;
+      const { R } = lineFrame(l);
+      g.strokeStyle = css(l.color);
+      g.lineWidth = 3;
+      g.setLineDash([8, 6]);
+      const r = R(city.subway.p0, city.subway.p1, 0, 0);
+      g.beginPath();
+      g.moveTo(X(r.x0), X(r.z0));
+      g.lineTo(X(r.x1), X(r.z1));
+      g.stroke();
+      g.setLineDash([]);
+      g.lineWidth = 1;
+      for (const s of city.subway.stations) {
+        const [x, z] = lineFrame(l).P(s.p, 0);
+        g.fillStyle = css(l.color);
+        g.fillRect(X(x) - 5, X(z) - 5, 10, 10);
+        g.fillStyle = '#fff';
+        g.font = 'bold 10px "Share Tech Mono", monospace';
+        g.fillText('M', X(x) - 3.5, X(z) + 3.5);
+      }
+    }
+    // eau : mer et canal
+    g.fillStyle = 'rgba(40,90,140,0.55)';
+    for (const w of city.coast.water) {
+      const x0 = Math.max(w.x0, -HALF - 20), x1 = Math.min(w.x1, HALF + 20), z0 = Math.max(w.z0, -HALF - 20), z1 = Math.min(w.z1, HALF + 20);
+      if (x1 > x0 && z1 > z0) g.fillRect(X(x0), X(z0), (x1 - x0) * k, (z1 - z0) * k);
     }
     for (const e of city.elevators) {
       const sv = [[0, -1], [1, 0], [0, 1], [-1, 0]][e.side];
@@ -196,6 +240,22 @@ export class MapView {
     g.font = '16px "Share Tech Mono", monospace';
     g.fillStyle = '#8c86b8';
     g.fillText('NEO-KOWLOON · SECTEUR 7', 14, 24);
+    // noms des quartiers au centre de leur zone
+    g.font = '14px "Share Tech Mono", monospace';
+    g.textAlign = 'center';
+    for (const id of DISTRICT_IDS) {
+      let sx = 0, sz = 0, n = 0;
+      for (let bi = 0; bi < BLOCKS; bi++)
+        for (let bj = 0; bj < BLOCKS; bj++)
+          if (city.districts.grid[bi * BLOCKS + bj] === id) { sx += -HALF + (bi + 0.5) * PITCH; sz += -HALF + (bj + 0.5) * PITCH; n++; }
+      if (!n) continue;
+      g.fillStyle = DISTRICTS[id].map;
+      g.globalAlpha = 0.85;
+      g.fillText(DISTRICTS[id].name.toUpperCase(), X(sx / n), X(sz / n));
+      g.globalAlpha = 1;
+    }
+    g.textAlign = 'left';
+    g.font = '16px "Share Tech Mono", monospace';
     let lx = 14;
     for (const [cat, col] of Object.entries(CAT_COLS)) {
       if (!city.dests.some((d) => d.cat === cat)) continue;

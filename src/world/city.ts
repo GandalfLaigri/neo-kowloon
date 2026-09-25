@@ -9,7 +9,9 @@ import {
   OPP, SIDES, SV, alongRange, faceCoord, outOf, rectSub, rectSubAll, sidePoint, sideRect, subtractIntervals,
   type Rect, type Seg, type Side,
 } from './geom';
-import { buildMetro, type MetroLine } from './metro';
+import { buildMetro, planMetro, type MetroLine } from './metro';
+import { buildSubway, planSubway, reserveSubway, subwayHoles, type Subway } from './subway';
+import type { Escalator, InteractPoint, Secret } from './ctx';
 import { decorateRoof, decorateTerraces, streetProps } from './props';
 import { placeFireEscapes } from './stairs';
 import { FLOOR_H, FLOOR_KINDS, buildFloor, planFloors, type Floor } from './floors';
@@ -17,6 +19,9 @@ import { placeDestinations, placeHolograms, placeIncidents, placePad, placeSearc
 import { buildLandmark, pickLandmarks, pyramidCrown } from './landmarks';
 import { balconies, roofFeature } from './extras';
 import { streetExtras } from './street';
+import { DistrictMap, pickWeighted } from './districts';
+import { districtDecor, placeFlocks, placeSecrets, plazaVariant } from './quarters';
+import { buildCoast, canalLots, clipToLand, coastFrame, planCoast, reserveCanal, type Coast } from './coast';
 import type { Dest } from './ctx';
 
 export { SV, OPP, faceCoord, alongRange, outOf, sideRect, type Side, type Rect, type Seg } from './geom';
@@ -66,7 +71,13 @@ export interface City {
   lanes: Lane[];
   wires: number[];
   plazas: Plaza[];
+  districts: DistrictMap;
+  coast: Coast;
   metro: MetroLine[];
+  subway: Subway | null;
+  escalators: Escalator[];
+  points: InteractPoint[];
+  secrets: Secret[];
   basements: Basement[];
   escapes: Escape[];
   dests: Dest[];
@@ -95,7 +106,11 @@ const OLD_B = ['Lin', 'Wong', 'Chan', 'Ho', 'Lau', 'Cheung', 'Victoria', 'Canton
 // ---------------------------------------------------------------------------
 export function generateCity(world: World, seed: number): City {
   const rng = new RNG(seed);
-  const ctx = makeCtx(world, rng);
+  const dmap = new DistrictMap(rng);
+  const ctx = makeCtx(world, rng, dmap);
+  const coast = planCoast(rng, dmap);
+  const metroPlan = planMetro(rng);
+  const subway = planSubway(rng, metroPlan, dmap);
   const { box, free } = ctx;
   const towers: Tower[] = [];
   const elevators: ElevatorDef[] = [];
@@ -108,8 +123,10 @@ export function generateCity(world: World, seed: number): City {
   // Chaussées : collision seule (le rendu est assuré par le réflecteur)
   for (let i = 0; i <= BLOCKS; i++) {
     const c = -HALF + i * PITCH;
-    world.col.add(c - ROAD / 2, -2, -HALF - PITCH, c + ROAD / 2, 0, HALF + PITCH);
-    world.col.add(-HALF - PITCH, -2, c - ROAD / 2, HALF + PITCH, 0, c + ROAD / 2);
+    for (const r of [{ x0: c - ROAD / 2, z0: -HALF - PITCH, x1: c + ROAD / 2, z1: HALF + PITCH }, { x0: -HALF - PITCH, z0: c - ROAD / 2, x1: HALF + PITCH, z1: c + ROAD / 2 }]) {
+      const k = clipToLand(coast, r);
+      if (k) world.col.add(k.x0, -2, k.z0, k.x1, 0, k.z1);
+    }
   }
 
   // ---- Îlots, lots, ruelles ---------------------------------------------------
@@ -120,14 +137,17 @@ export function generateCity(world: World, seed: number): City {
       const B: Rect = { x0: bx0, z0: bz0, x1: bx0 + BLOCK, z1: bz0 + BLOCK };
       blocks.push(B);
       const I: Rect = { x0: B.x0 + SIDEWALK, z0: B.z0 + SIDEWALK, x1: B.x1 - SIDEWALK, z1: B.z1 - SIDEWALK };
-      const { lots, al } = splitBlock(I, rng);
+      const canalHere = coast.canal && coast.canal.bi === bi && coast.canal.bj === bj;
+      const { lots, al } = canalHere ? { lots: canalLots(coast, I), al: [] as Rect[] } : splitBlock(I, rng);
       alleys.push(...al);
       for (const lot of lots) {
         const streetSides: Side[] = [];
         const alleySides: Side[] = [];
         for (const s of SIDES) (Math.abs(faceCoord(lot, s) - faceCoord(I, s)) < 0.01 ? streetSides : alleySides).push(s);
         const cd = Math.max(Math.abs((lot.x0 + lot.x1) / 2), Math.abs((lot.z0 + lot.z1) / 2)) / HALF;
-        if (rng.chance(0.05 + cd * 0.06) && lots.length > 1) {
+        const LD = dmap.at((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2);
+        const pc = LD.id === 'port' ? 0.32 : LD.id === 'riche' ? 0.12 : LD.id === 'fonds' ? 0.1 : 0.05 + cd * 0.06;
+        if (rng.chance(pc) && lots.length > 1) {
           plazas.push({ rect: lot, streetSides });
           continue;
         }
@@ -140,7 +160,9 @@ export function generateCity(world: World, seed: number): City {
   // ---- Pyramide-arcologie : un îlot central entier ------------------------------
   let pyramidLot: Rect | null = null;
   {
-    const cands = blocks.filter((B) => Math.max(Math.abs((B.x0 + B.x1) / 2), Math.abs((B.z0 + B.z1) / 2)) < PITCH * 1.6);
+    const central = blocks.filter((B) => Math.max(Math.abs((B.x0 + B.x1) / 2), Math.abs((B.z0 + B.z1) / 2)) < PITCH * 2.1);
+    const good = central.filter((B) => ['centre', 'riche'].includes(dmap.idAt((B.x0 + B.x1) / 2, (B.z0 + B.z1) / 2)));
+    const cands = good.length ? good : central;
     const B = rng.pick(cands);
     const I: Rect = { x0: B.x0 + SIDEWALK, z0: B.z0 + SIDEWALK, x1: B.x1 - SIDEWALK, z1: B.z1 - SIDEWALK };
     const inside = (r: Rect) => r.x0 >= I.x0 - 0.01 && r.x1 <= I.x1 + 0.01 && r.z0 >= I.z0 - 0.01 && r.z1 <= I.z1 + 0.01;
@@ -220,13 +242,18 @@ export function generateCity(world: World, seed: number): City {
     const area = (lot.x1 - lot.x0) * (lot.z1 - lot.z0);
     let hMax = 150 + 340 * Math.pow(1 - d, 1.2);
     if (area > 3000) hMax *= 1.25;
-    let H = hMax * (0.35 + 0.65 * Math.pow(rng.next(), 0.7));
-    if (rng.chance(0.06 + (area > 3000 ? 0.3 : 0) + (1 - d) * 0.05)) H = 430 + rng.next() * 150;
-    // styles : vieux immeubles de brique et entrepôts en périphérie, murs-rideaux au centre, hôtels-capsules
+    const D = dmap.at(cx, cz);
+    let H = hMax * (0.35 + 0.65 * Math.pow(rng.next(), 0.7)) * D.height;
+    if ((D.id === 'centre' || D.id === 'riche') && rng.chance(0.06 + (area > 3000 ? 0.3 : 0) + (1 - d) * 0.05)) H = 430 + rng.next() * 150;
+    // styles : selon le quartier (vieux immeubles de brique, entrepôts, murs-rideaux, capsules…)
     let style: number = rng.pick([1, 1, 2, 2, 3, 4] as const);
     let low = 0;
     const r = rng.next();
-    if (d > 0.55 && r < 0.2) { style = STYLE.HERITAGE; low = rng.int(2, 3); }
+    if (D.styles) {
+      style = pickWeighted(rng, D.styles);
+      if (style === STYLE.HERITAGE) low = rng.int(D.id === 'fonds' ? 2 : 2, 3);
+      else if (style === STYLE.INDUSTRIAL) low = rng.int(1, 3);
+    } else if (d > 0.55 && r < 0.2) { style = STYLE.HERITAGE; low = rng.int(2, 3); }
     else if (d > 0.5 && r < 0.32) { style = STYLE.INDUSTRIAL; low = rng.int(1, 3); }
     else if (d < 0.5 && r > 0.8) style = STYLE.CURTAIN;
     else if (r > 0.74 && r < 0.8) style = STYLE.CAPSULE;
@@ -264,11 +291,11 @@ export function generateCity(world: World, seed: number): City {
       name: style === STYLE.HERITAGE ? `${rng.pick(OLD_A)} ${rng.pick(OLD_B)}` : style === STYLE.INDUSTRIAL ? `Entrepôt ${rng.int(2, 99)}` : `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B)}`,
       lot, segs, H, style,
       color: style === STYLE.HERITAGE ? rng.pick(BRICK) : style === STYLE.INDUSTRIAL ? rng.pick(METAL) : style === STYLE.CURTAIN ? rng.pick(GLASS) : style === STYLE.CAPSULE ? rng.pick(PANEL) : rng.pick(CONCRETE),
-      accent: rng.pick(NEON),
-      litBias: rng.byte(),
+      accent: rng.pick(D.neon),
+      litBias: D.id === 'riche' ? 140 + Math.round(rng.byte() * 0.45) : D.id === 'fonds' ? Math.round(rng.byte() * 0.5) : rng.byte(),
       streetSides, alleySides, eSide,
-      neonEdges: rng.chance(old ? 0.25 : 0.75),
-      cornerNeon: rng.chance(old ? 0.1 : 0.3),
+      neonEdges: rng.chance(old ? 0.25 : D.neonEdges),
+      cornerNeon: rng.chance(old ? 0.1 : D.id === 'plaisirs' ? 0.6 : 0.3),
       crown: !old && rng.chance(0.35),
       gaps: segs.map(() => [[], [], [], []]),
       floors: [],
@@ -276,14 +303,15 @@ export function generateCity(world: World, seed: number): City {
     if (style === 3) t.color = dark(t.color, 1.15);
 
     const roomSides = streetSides.filter((s) => s !== eSide);
-    if (roomSides.length && rng.chance(0.24) && segs[0].y1 - segs[0].y0 >= 18) {
+    if (roomSides.length && rng.chance(D.rooms) && segs[0].y1 - segs[0].y0 >= 18) {
       const s = rng.pick(roomSides);
       const [a0, a1] = alongRange(seg0, s);
       const w = snap(Math.min(a1 - a0 - 4, rng.range(12, 20)));
       const depth = snap(rng.range(9, 12));
       if (w >= 12) {
         const ra = snap(rng.range(a0 + 2, a1 - 2 - w));
-        t.room = { side: s, rect: sideRect(s, faceCoord(seg0, s), ra, ra + w, -depth, 0), kind: rng.int(0, 2) };
+        const kind = D.id === 'plaisirs' ? rng.pick([0, 0, 1]) : D.id === 'asia' ? rng.pick([2, 2, 0]) : rng.int(0, 2);
+        t.room = { side: s, rect: sideRect(s, faceCoord(seg0, s), ra, ra + w, -depth, 0), kind };
       }
     }
     t.floors = planFloors(ctx, t, LUX_Y);
@@ -292,10 +320,18 @@ export function generateCity(world: World, seed: number): City {
 
   // ---- Sous-sols (planifiés avant de couler les dalles) -------------------------
   const basements = planBasements(ctx, plazas, alleys);
+  // un sous-sol de ruelle devient un bar clandestin (secret du carnet)
+  {
+    const al = basements.filter((b) => { const id = dmap.idAt((b.rect.x0 + b.rect.x1) / 2, (b.rect.z0 + b.rect.z1) / 2); return b.rect.x1 - b.rect.x0 < 30 && (id === 'asia' || id === 'plaisirs' || id === 'fonds'); });
+    const pick = al.length ? rng.pick(al) : basements.find((b) => b.rect.x1 - b.rect.x0 < 30);
+    if (pick) { pick.kind = 3; pick.name = 'Le Lotus Noir'; }
+  }
   for (const B of blocks) {
-    const holes = basements.map((b) => b.stair).filter((s) => s.x0 < B.x1 && s.x1 > B.x0 && s.z0 < B.z1 && s.z1 > B.z0);
+    const holes = [...basements.map((b) => b.stair), ...coast.holes, ...subwayHoles(subway)].filter((s) => s.x0 < B.x1 && s.x1 > B.x0 && s.z0 < B.z1 && s.z1 > B.z0);
     for (const r of rectSubAll(B, holes)) box(r, 0, 0.5, { color: hex(0x3b3a45), style: STYLE.GROUND, seed: rng.byte() });
   }
+  reserveCanal(ctx, coast);
+  reserveSubway(ctx, subway);
 
   // ---- Corps des tours ------------------------------------------------------
   for (const t of towers) {
@@ -378,7 +414,7 @@ export function generateCity(world: World, seed: number): City {
       const [bx, bz] = ctr((a0 + a1) / 2, -(D - 1.8));
       ctx.pose(bx, 0.5, bz, face + Math.PI, 4);
       for (let a = a0 + 3; a < a1 - 3; a += 1.5)
-        if (rng.chance(0.45)) { const [x, z] = ctr(a + 0.25, -(D - 4.35)); ctx.sit(x, 1.4, z, face, 8); }
+        { const [x, z] = ctr(a + 0.25, -(D - 4.35)); ctx.seat(rng.chance(0.45), x, 1.4, z, face, 8); }
     } else if (room.kind === 1) {
       for (const row of [3, 7]) {
         if (row + 2 > D - 1) continue;
@@ -395,6 +431,7 @@ export function generateCity(world: World, seed: number): City {
         box(lr(a, a + 0.5, -(D * 0.5), -(D * 0.5 - 0.5)), 4.5, 5.25, { color: hex(0xff3020), style: STYLE.EMISSIVE, emis: 2.5, solid: false, extra: 2 });
       const [sx, sz] = ctr((a0 + a1) / 2, -(D - 3));
       world.emitSteam(sx, 1.3, sz, 0.8, 3.5, 10, hex(0x5a4040));
+      { const [fx, fz] = ctr((a0 + a1) / 2, -(D - 4.4)); ctx.interact('food', fx, 0.5, fz, face); }
       for (let a = a0 + 4.5; a < a1 - 4.5; a += 1.5)
         if (rng.chance(0.35)) { const [x, z] = ctr(a, -(D - 4.3)); ctx.pose(x, 0.5, z, face, 10); }
     }
@@ -468,7 +505,8 @@ export function generateCity(world: World, seed: number): City {
   }
 
   // ---- Métro aérien -----------------------------------------------------------
-  const metro = buildMetro(ctx);
+  const metro = buildMetro(ctx, metroPlan);
+  if (subway) buildSubway(ctx, subway);
 
   // ---- Passerelles ----------------------------------------------------------
   const pairs: { A: Tower; B: Tower; axis: 0 | 1; gap: number }[] = [];
@@ -678,6 +716,7 @@ export function generateCity(world: World, seed: number): City {
 
   // ---- Façades : climatiseurs, tuyaux, enseignes, écrans, devantures ---------
   for (const t of towers) {
+    const TD = dmap.at((t.lot.x0 + t.lot.x1) / 2, (t.lot.z0 + t.lot.z1) / 2);
     t.segs.forEach((seg, k) => {
       for (const s of SIDES) {
         const F = faceCoord(seg, s);
@@ -701,7 +740,7 @@ export function generateCity(world: World, seed: number): City {
           if (free(r, seg.y0 + 1, seg.y1 - 1)) box(r, seg.y0 + (k === 0 ? 3 : 1), seg.y1 - 1, { color: hex(0x3d3a36), solid: false, noRain: true });
         }
         // Écrans géants
-        if (street && k <= 1 && fw >= 16 && s !== t.eSide && rng.chance(0.4)) {
+        if (street && k <= 1 && fw >= 16 && s !== t.eSide && rng.chance(TD.screens)) {
           const portrait = rng.chance(0.35);
           const w = portrait ? snap(rng.range(7, 10), 1) : snap(rng.range(10, Math.min(26, fw - 4)), 1);
           const h = portrait ? snap(rng.range(20, 34), 1) : snap(w * rng.range(0.5, 0.65), 1);
@@ -714,7 +753,7 @@ export function generateCity(world: World, seed: number): City {
               box(sideRect(s, F, a - 0.5, a + w + 0.5, 0, 0.35), yy - 0.5, yy + h + 0.5, { color: hex(0x15151b) });
               box(sideRect(s, F, a, a + w, 0, 0.5), yy, yy + h, { color: hex(0x111111), style: STYLE.SCREEN, emis: 2.4, seed: rng.byte() });
               const [cx, cz] = sidePoint(s, F, a + w / 2, 8);
-              world.light(cx, yy + h / 2, cz, rng.pick(NEON), 2.2, 45);
+              world.light(cx, yy + h / 2, cz, rng.pick(TD.neon), 2.2, 45);
             }
           }
         }
@@ -727,14 +766,14 @@ export function generateCity(world: World, seed: number): City {
             const w = Math.min(snap(rng.range(4, 9)), a1 - 1 - p);
             if (w < 3) break;
             if ((street || rng.chance(0.4)) && free(sideRect(s, F, p, p + w, 0, 1.6), 0.55, 4.6)) {
-              const col = rng.pick(SHOP_COLS);
+              const col = rng.pick(TD.shop);
               const shutter = (alley && rng.chance(0.4)) || (t.style === STYLE.INDUSTRIAL && rng.chance(0.75));
               if (shutter) {
                 // rideau de fer baissé
                 box(sideRect(s, F, p, p + w, 0, 0.15), 0.5, 3.6, { color: hex(0x4a4a50), seed: rng.byte() });
               } else {
                 box(sideRect(s, F, p, p + w, 0, 0.2), 0.5, 4.0, { color: col, style: STYLE.SHOP, emis: 1.7, seed: rng.byte(), solid: false });
-                const aw = rng.pick(NEON);
+                const aw = rng.pick(TD.neon);
                 box(sideRect(s, F, p, p + w, 0, 1.5), 4.0, 4.5, { color: dark(aw, 0.35) });
                 box(sideRect(s, F, p, p + w, 1.4, 1.55), 3.85, 4.0, { color: aw, style: STYLE.EMISSIVE, emis: 3, solid: false, noRain: true, extra: rng.chance(0.15) ? 3 : 0, seed: rng.byte() });
                 const [cx, cz] = sidePoint(s, F, p + w / 2, 1.6);
@@ -742,7 +781,7 @@ export function generateCity(world: World, seed: number): City {
                 if (rng.chance(0.55)) {
                   const sw = Math.min(w, snap(rng.range(4, 8)));
                   box(sideRect(s, F, p + (w - sw) / 2, p + (w + sw) / 2, 0, 0.5), 4.75, 6.25, {
-                    color: rng.pick(NEON), style: STYLE.SIGN, emis: 3, seed: rng.byte(), extra: rng.int(0, 2),
+                    color: rng.pick(TD.neon), style: STYLE.SIGN, emis: 3, seed: rng.byte(), extra: TD.id === 'fonds' && rng.chance(0.4) ? 0 : rng.int(0, 2),
                   });
                 }
                 if (street && rng.chance(0.3)) {
@@ -756,7 +795,7 @@ export function generateCity(world: World, seed: number): City {
           }
         }
         // Enseignes en drapeau
-        const nBlade = Math.floor(fw / (street ? 8 : 14));
+        const nBlade = Math.floor((fw / (street ? 8 : 14)) * TD.signs);
         for (let i = 0; i < nBlade; i++) {
           if (alley && !rng.chance(0.6)) continue;
           const a = snap(rng.range(a0 + 1, a1 - 1.5));
@@ -765,7 +804,7 @@ export function generateCity(world: World, seed: number): City {
           if (y0 + h > seg.y1 - 1) continue;
           const width = alley ? 2 : 3;
           if (!free(sideRect(s, F, a - 0.75, a + 1.25, 0.3, width + 0.8), y0 - 0.5, y0 + h + 0.5)) continue;
-          const col = rng.pick(NEON);
+          const col = rng.pick(TD.neon);
           box(sideRect(s, F, a, a + 0.5, 0.5, 0.5 + width), y0, y0 + h, { color: col, style: STYLE.SIGN, emis: 3.2, seed: rng.byte(), extra: rng.pick([0, 0, 1, 2, 0]) });
           box(sideRect(s, F, a, a + 0.5, 0, 0.5), y0 + 1, y0 + 1.5, { color: hex(0x222222) });
           box(sideRect(s, F, a, a + 0.5, 0, 0.5), y0 + h - 1.5, y0 + h - 1, { color: hex(0x222222) });
@@ -776,27 +815,34 @@ export function generateCity(world: World, seed: number): City {
     });
   }
 
+  // ---- Front de mer : quai, canal, port, phare ------------------------------------
+  buildCoast(ctx, coast, towers);
+
   // ---- Rue : mobilier, crasse, vapeur, campements -------------------------------
   streetProps(ctx, blocks, towers, metro);
   streetExtras(ctx, blocks, towers, metro);
+  districtDecor(ctx, blocks, towers, metro, wires);
 
   // ---- Places et marchés de nuit ------------------------------------------------
-  for (const { rect: P } of plazas) {
+  for (const plaza of plazas) {
+    const P = plaza.rect;
     const cx = (P.x0 + P.x1) / 2, cz = (P.z0 + P.z1) / 2;
+    const PD = dmap.at(cx, cz);
+    if (plazaVariant(ctx, plaza, PD)) continue;
     let stalls = 0;
     const totem = { x0: cx - 1.5, x1: cx + 1.5, z0: cz - 1.5, z1: cz + 1.5 };
     if (free(totem, 0.5, 14)) {
       box(totem, 0.5, 14, { color: hex(0x111111), style: STYLE.SCREEN, emis: 2.4, seed: rng.byte() });
-      world.light(cx, 8, cz, rng.pick(NEON), 2.5, 22);
+      world.light(cx, 8, cz, rng.pick(PD.neon), 2.5, 22);
     }
     for (let x = P.x0 + 3; x < P.x1 - 5; x += 7)
       for (let z = P.z0 + 3; z < P.z1 - 4; z += 7) {
         if (Math.abs(x + 2 - cx) < 5 && Math.abs(z + 1.5 - cz) < 5) continue;
         if (!rng.chance(0.65)) continue;
         if (!free({ x0: x - 0.3, x1: x + 3.8, z0: z - 1.8, z1: z + 1.6 }, 0.55, 3.3)) continue;
-        const col = rng.pick(NEON);
+        const col = rng.pick(PD.neon);
         box({ x0: x, x1: x + 3.5, z0: z, z1: z + 1 }, 0.5, 1.6, { color: hex(0x4a2e1c) });
-        box({ x0: x, x1: x + 3.5, z0: z + 0.9, z1: z + 1 }, 0.9, 1.5, { color: rng.pick(SHOP_COLS), style: STYLE.SHOP, emis: 1.5, solid: false, seed: rng.byte() });
+        box({ x0: x, x1: x + 3.5, z0: z + 0.9, z1: z + 1 }, 0.9, 1.5, { color: rng.pick(PD.shop), style: STYLE.SHOP, emis: 1.5, solid: false, seed: rng.byte() });
         box({ x0: x, x1: x + 0.25, z0: z - 1.5, z1: z - 1.25 }, 0.5, 3, { color: hex(0x222222) });
         box({ x0: x + 3.25, x1: x + 3.5, z0: z - 1.5, z1: z - 1.25 }, 0.5, 3, { color: hex(0x222222) });
         box({ x0: x - 0.25, x1: x + 3.75, z0: z - 1.75, z1: z + 1.5 }, 3, 3.25, { color: dark(col, 0.45) });
@@ -805,6 +851,7 @@ export function generateCity(world: World, seed: number): City {
         world.light(x + 1.75, 2.5, z + 2.5, hex(0xff8a40), 1.6, 9);
         if (rng.chance(0.5)) world.emitSteam(x + 1.75, 1.7, z + 0.4, 0.7, 3, 8, hex(0x6a5a50));
         ctx.pose(x + 1.75, 0.5, z - 0.8, 0, 4);
+        ctx.interact('food', x + 1.75, 0.5, z + 2.3, Math.PI);
         if (rng.chance(0.3)) ctx.pose(x + rng.range(0.4, 3.1), 0.5, z - 0.8, rng.range(-0.6, 0.6), rng.chance(0.5) ? 4 : 5);
         for (let c = 0; c < rng.int(0, 3); c++) ctx.idle(x + rng.range(0.3, 3.2), 0.5, z + 2.1 + rng.range(0, 0.6), Math.PI, rng.chance(0.4));
         stalls++;
@@ -834,6 +881,10 @@ export function generateCity(world: World, seed: number): City {
     const [vx, vz] = sidePoint(t.eSide as Side, faceCoord(top, t.eSide as Side), t.along!, -2);
     ctx.dest('Points de vue', `${t.name} · ${Math.round(t.H - 0.5)} m`, vx, t.H + 0.02, vz, Math.atan2(SV[t.eSide][0], SV[t.eSide][1]));
   }
+
+  // ---- Oiseaux ------------------------------------------------------------------
+  placeFlocks(ctx, plazas, towers, blocks, (a) => coastFrame(coast.sea).P(a, 16));
+  placeSecrets(ctx, towers, basements);
 
   // ---- Câbles suspendus (+ linge qui sèche dans les ruelles) ---------------------------
   const metroRoad = (axis: 0 | 1, mid: number) => metro.some((l) => (axis === 0 ? l.axis === 1 : l.axis === 0) && Math.abs(l.c - mid) < 12);
@@ -897,7 +948,7 @@ export function generateCity(world: World, seed: number): City {
     ctx.peds.loops.push({
       pts: [[B.x0 + d, B.z0 + d], [B.x1 - d, B.z0 + d], [B.x1 - d, B.z1 - d], [B.x0 + d, B.z1 - d]],
       y: 0.5,
-      count: Math.round(8 + 20 * Math.pow(1 - cd, 1.3) + rng.range(0, 4)),
+      count: Math.round((8 + 20 * Math.pow(1 - cd, 1.3) + rng.range(0, 4)) * dmap.at((B.x0 + B.x1) / 2, (B.z0 + B.z1) / 2).peds),
       pause: 40,
     });
   }
@@ -914,10 +965,11 @@ export function generateCity(world: World, seed: number): City {
   // ---- Skyline lointaine (décor) -----------------------------------------------------
   const GR = HALF + PITCH;
   const ground = { color: hex(0x0e0d14), far: true };
-  world.box(-2400, -1, -2400, -GR, -0.02, 2400, ground);
-  world.box(GR, -1, -2400, 2400, -0.02, 2400, ground);
-  world.box(-GR, -1, -2400, GR, -0.02, -GR, ground);
-  world.box(-GR, -1, GR, GR, -0.02, 2400, ground);
+  const cf = coastFrame(coast.sea);
+  for (const r of [{ x0: -2400, z0: -2400, x1: -GR, z1: 2400 }, { x0: GR, z0: -2400, x1: 2400, z1: 2400 }, { x0: -GR, z0: -2400, x1: GR, z1: -GR }, { x0: -GR, z0: GR, x1: GR, z1: 2400 }]) {
+    const k = clipToLand(coast, r);
+    if (k) world.box(k.x0, -1, k.z0, k.x1, -0.02, k.z1, ground);
+  }
   const EXT = 8;
   for (let bi = -EXT; bi < BLOCKS + EXT; bi++)
     for (let bj = -EXT; bj < BLOCKS + EXT; bj++) {
@@ -926,7 +978,7 @@ export function generateCity(world: World, seed: number): City {
       const bz0 = -HALF + bj * PITCH + ROAD / 2;
       const cx = bx0 + BLOCK / 2, cz = bz0 + BLOCK / 2;
       const dist = Math.hypot(cx, cz);
-      if (dist > 1700) continue;
+      if (dist > 1700 || cf.o(cx, cz) > 0) continue;
       world.box(bx0, 0, bz0, bx0 + BLOCK, 0.5, bz0 + BLOCK, { color: hex(0x2c2b34), style: STYLE.GROUND, far: true });
       const fall = Math.max(0.15, 1 - (dist - HALF) / 1400);
       for (const [ox, oz] of [[4, 4], [41, 4], [4, 41], [41, 41]]) {
@@ -965,5 +1017,5 @@ export function generateCity(world: World, seed: number): City {
     const sorted = cat === 'Toits' || cat === 'Étages' ? [...list].sort((p, q) => q.y - p.y) : list;
     dests.push(...sorted.slice(0, n));
   }
-  return { towers, elevators, bridges, lanes, wires, plazas, metro, basements, escapes: ctx.escapes, dests, peds: ctx.peds, spawn };
+  return { towers, elevators, bridges, lanes, wires, plazas, districts: dmap, coast, metro, subway, escalators: ctx.escalators, points: ctx.points, secrets: ctx.secrets, basements, escapes: ctx.escapes, dests, peds: ctx.peds, spawn };
 }

@@ -46,7 +46,7 @@ export function streetExtras(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: M
           const [lx, lz] = sidePoint(s, F, a + 2.5, -2.2);
           ctx.world.light(lx, 2.5, lz, hex(0xd8ecff), 1.2, 9);
           for (let k = 0; k < 3; k++)
-            if (rng.chance(0.45)) { const [x, z] = sidePoint(s, F, a + 1.6 + k * 1.0, -2.9); ctx.sit(x, 0.95, z, out, rng.chance(0.4) ? 7 : 1); }
+            { const [x, z] = sidePoint(s, F, a + 1.6 + k * 1.0, -2.9); ctx.seat(rng.chance(0.45), x, 0.95, z, out, rng.chance(0.4) ? 7 : 1); }
           for (let k = 0; k < rng.int(0, 3); k++) {
             const [x, z] = sidePoint(s, F, a + rng.range(0.5, 4.5), -1.6);
             if (rng.chance(0.5)) ctx.pose(x, 0.5, z, out + rng.range(-0.8, 0.8), 5);
@@ -115,6 +115,7 @@ export function streetExtras(ctx: Ctx, blocks: Rect[], towers: Tower[], metro: M
           const [kx, kz] = sidePoint(s, F, a + 1.3, -2.8);
           ctx.world.light(kx, 2.2, kz, hex(0xffc890), 1.3, 8);
           ctx.pose(kx, 0.5, kz, out, 4);
+          { const [fx, fz] = sidePoint(s, F, a + 1.3, -1.0); ctx.interact('food', fx, 0.5, fz, out + Math.PI); }
           if (rng.chance(0.5)) ctx.world.emitSteam(kx, 1.5, kz + 0.1, 0.5, 3, 8, hex(0x6a5a50));
           if (rng.chance(0.6)) { const [cx, cz] = sidePoint(s, F, a + rng.range(0.5, 2), -0.9); ctx.pose(cx, 0.5, cz, out + Math.PI, 10); }
         }
@@ -209,8 +210,11 @@ function parkedCar(ctx: Ctx, s: Side, F: number, p: number, metroRoad: boolean) 
   if (!ctx.free(R(-0.3, L + 0.3, 0.2, 2.3), 0.05, 1.8)) return;
   if (metroRoad && !ctx.free(R(-1, L + 1, 0, 3), 0.05, 4)) return;
   const kind = rng.next();
-  const taxi = kind < 0.12, wreck = kind > 0.93, van = !taxi && !wreck && kind > 0.8;
-  const col = taxi ? hex(0xe0b020) : wreck ? rng.pick([hex(0x4a2a1a), hex(0x3a3a34), hex(0x2a2a2e)]) : rng.pick(CAR_COLS);
+  const [cx, cz] = sidePoint(s, F, p + 2, 1);
+  const did = ctx.districts.idAt(cx, cz);
+  const wreckP = did === 'fonds' ? 0.3 : did === 'riche' ? 0 : did === 'port' ? 0.15 : 0.07;
+  const taxi = kind < 0.12, wreck = kind > 1 - wreckP, van = !taxi && !wreck && kind > (did === 'port' ? 0.5 : 0.8);
+  const col = taxi ? hex(0xe0b020) : wreck ? rng.pick([hex(0x4a2a1a), hex(0x3a3a34), hex(0x2a2a2e)]) : did === 'riche' ? rng.pick([hex(0xe8e8ec), hex(0x0c0c10), hex(0x9a9ca4), hex(0x3a2a1a)]) : rng.pick(CAR_COLS);
   const y0 = wreck ? 0.12 : 0.3;
   const top = van ? 2.3 : 1.0;
   ctx.box(R(0, L, 0.35, 2.15), y0, top, { color: col, seed: rng.byte() });

@@ -78,7 +78,7 @@ function drone(kind: number) {
 
 // ---------------------------------------------------------------------------
 interface GV { lane: number; s: number; v: number; vmax: number; kind: number; idx: number; len: number; stopped: number }
-interface GLane { axis: 0 | 1; t: number; dir: 1 | -1; ids: number[] }
+interface GLane { axis: 0 | 1; t: number; dir: 1 | -1; ids: number[]; lo: number; hi: number }
 interface Drone { kind: number; idx: number; axis: 0 | 1; c: number; p0: number; p1: number; y: number; speed: number; ph: number }
 interface Pad { spot: Spot; idx: number; T: number; phase: number }
 
@@ -113,7 +113,7 @@ export class Vehicles {
   private p = new THREE.Vector3();
   private one = new THREE.Vector3(1, 1, 1);
 
-  constructor(metro: MetroLine[], spots: Spot[], mat: THREE.Material, seed: number) {
+  constructor(metro: MetroLine[], spots: Spot[], mat: THREE.Material, seed: number, sea = -1) {
     const rng = new RNG(seed ^ 0x1234567);
     // --- Trafic au sol ---
     const geos = [sedan(false), sedan(true), van(), moto()];
@@ -125,14 +125,18 @@ export class Vehicles {
         for (const dir of [1, -1] as const) {
           const right = axis === 0 ? dir : -dir; // conduite à droite
           for (const off of onMetro ? [5.5] : [2.5, 5.5]) {
-            const lane: GLane = { axis, t: c + right * off, dir, ids: [] };
+            // côté mer : la rue s'arrête à la route côtière (sea : 0 -z · 1 +x · 2 +z · 3 -x)
+            const perp = (sea === 1 || sea === 3) ? axis === 0 : (sea === 0 || sea === 2) ? axis === 1 : false;
+            const lo = perp && (sea === 3 || sea === 0) ? -HALF + 12 : L0;
+            const hi = perp && (sea === 1 || sea === 2) ? HALF - 12 : L1;
+            const lane: GLane = { axis, t: c + right * off, dir, ids: [], lo, hi };
             const n = rng.int(3, 6);
             const base = rng.range(0, LEN);
             for (let k = 0; k < n; k++) {
               const kind = off > 5 && rng.chance(0.25) ? 2 : rng.chance(0.18) ? 1 : rng.chance(0.15) ? 3 : 0;
               const len = kind === 2 ? 6.4 : kind === 3 ? 2.1 : 4.4;
               lane.ids.push(this.gv.length);
-              this.gv.push({ lane: this.lanes.length, s: L0 + ((base + (k * LEN) / n) % LEN), v: 0, vmax: rng.range(9, 15), kind, idx: counts[kind]++, len, stopped: 0 });
+              this.gv.push({ lane: this.lanes.length, s: lo + ((base + (k * (hi - lo)) / n) % (hi - lo)), v: 0, vmax: rng.range(9, 15), kind, idx: counts[kind]++, len, stopped: 0 });
             }
             // ordre de la file : du premier au dernier dans le sens de marche
             lane.ids.sort((a, b) => (this.gv[b].s - this.gv[a].s) * dir);
@@ -206,7 +210,14 @@ export class Vehicles {
     mesh.setMatrixAt(i, this.m);
   }
 
-  update(dt: number, t: number, cam: THREE.Vector3, player: THREE.Vector3, beams: Beams) {
+  update(dt: number, t: number, cam: THREE.Vector3, player: THREE.Vector3, beams: Beams, camFwd?: THREE.Vector3) {
+    /** Point visible depuis la caméra (pour escamoter les voitures hors champ seulement). */
+    const seen = (x: number, z: number) => {
+      const dx = x - cam.x, dz = z - cam.z, d = Math.hypot(dx, dz);
+      if (d > 220) return false;
+      if (d < 25 || !camFwd) return true;
+      return (dx * camFwd.x + dz * camFwd.z) / d > 0.2;
+    };
     const near: Mover[] = [];
     // ---- Trafic au sol : files, feux, distance de sécurité ----
     for (const lane of this.lanes) {
@@ -216,7 +227,8 @@ export class Vehicles {
         const lead = this.gv[ids[(k - 1 + ids.length) % ids.length]];
         let limit = v.vmax;
         if (lead !== v) {
-          const gap = ((((lead.s - v.s) * lane.dir) % LEN) + LEN) % LEN - (lead.len + v.len) / 2 - 2.5;
+          const span = lane.hi - lane.lo;
+        const gap = ((((lead.s - v.s) * lane.dir) % span) + span) % span - (lead.len + v.len) / 2 - 2.5;
           limit = Math.min(limit, Math.sqrt(2 * 5 * Math.max(0, gap)));
         }
         // feux : prochaine ligne d'arrêt
@@ -242,8 +254,14 @@ export class Vehicles {
         const a = limit > v.v ? 3 : -7;
         v.v = Math.max(0, Math.min(limit, v.v + a * dt));
         v.s += lane.dir * v.v * dt;
-        if (v.s > L1) v.s -= LEN;
-        if (v.s < L0) v.s += LEN;
+        const P = (s: number): [number, number] => (lane.axis === 0 ? [s, lane.t] : [lane.t, s]);
+        if (v.s > lane.hi || v.s < lane.lo) {
+          // bout de rue : on ne fait réapparaître la voiture à l'autre bout que hors de la vue
+          const out = v.s > lane.hi ? lane.hi : lane.lo;
+          const back = v.s > lane.hi ? lane.lo : lane.hi;
+          if (seen(...P(out)) || seen(...P(back))) { v.s = out; v.v = 0; }
+          else v.s = back + (v.s - out);
+        }
         const x = lane.axis === 0 ? v.s : lane.t, z = lane.axis === 0 ? lane.t : v.s;
         const yaw = lane.axis === 0 ? (lane.dir > 0 ? 0 : Math.PI) : lane.dir > 0 ? -Math.PI / 2 : Math.PI / 2;
         const lean = v.kind === 3 ? Math.sin(t * 0.8 + v.idx) * 0.05 : 0;

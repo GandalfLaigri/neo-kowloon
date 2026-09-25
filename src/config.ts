@@ -39,6 +39,7 @@ export const STYLE = {
   CAPSULE: 16,    // modules à hublots empilés
   BOOKS: 17,      // rayonnages de livres
   FENCE: 18,      // grillage (motif découpé)
+  ESCALATOR: 19,  // marches d'escalator (bandes qui défilent)
 } as const;
 
 /** Altitude à partir de laquelle la ville devient "luxueuse" (terrasses, toits, façades). */

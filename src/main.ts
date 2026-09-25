@@ -1,17 +1,24 @@
 import * as THREE from 'three';
 import type { Reflector } from 'three/addons/objects/Reflector.js';
 import { CityAudio, type AudioFrame } from './audio';
-import { CLOUD_Y, RAIN_EXTENT, RAIN_RES } from './config';
+import { BLOCKS, CLOUD_Y, RAIN_EXTENT, RAIN_RES } from './config';
 import { Elevators } from './elevators';
 import { Hud, MapView } from './hud';
 import { Metro } from './metro';
 import { Pilot } from './pilot';
+import { Birds } from './fauna';
+import { Events } from './events';
+import { Interactions } from './interact';
+import { Journal } from './journal';
+import { QUAY1 } from './world/coast';
 import { Pedestrians, type RiderGroup } from './pedestrians';
 import { Input, Player } from './player';
 import { Beams } from './render/beams';
 import { createRoad } from './render/ground';
+import { createWater } from './render/water';
+import { WATER_Y, clipToLand } from './world/coast';
 import { LightPool } from './render/lightpool';
-import { createGlassMaterial, createPedMaterial, createVoxelMaterial, shared } from './render/materials';
+import { createBirdMaterial, createGlassMaterial, createPedMaterial, createVoxelMaterial, shared } from './render/materials';
 import { Post } from './render/post';
 import { Rain } from './render/rain';
 import { Splashes } from './render/splash';
@@ -22,6 +29,7 @@ import { Spectacle } from './spectacle';
 import { Traffic, type Mover } from './traffic';
 import { Vehicles } from './vehicles';
 import { World } from './world/builder';
+import { DISTRICTS, DISTRICT_IDS, type DistrictId } from './world/districts';
 import { generateCity, type City } from './world/city';
 import type { Dest } from './world/ctx';
 
@@ -42,8 +50,10 @@ scene.fog = fog;
 const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.15, 6000);
 
 const voxelMat = createVoxelMaterial();
+const voxelDynMat = createVoxelMaterial(true); // objets mobiles, épargnés par les coupures de courant
 const glassMat = createGlassMaterial();
 const pedMat = createPedMaterial();
+const birdMat = createBirdMaterial();
 const sky = new Sky();
 scene.add(sky.group);
 const post = new Post(renderer, scene, camera);
@@ -76,7 +86,12 @@ interface CityInstance {
   map: MapView;
   player: Player;
   pilot: Pilot;
+  birds: Birds;
+  events: Events;
+  interactions: Interactions;
+  journal: Journal;
   venues: { x: number; y: number; z: number; box: THREE.Box3; bar: boolean }[];
+  districtTex: THREE.DataTexture;
 }
 let inst: CityInstance | null = null;
 
@@ -108,15 +123,24 @@ function buildCity(seedStr: string): CityInstance {
   const world = new World();
   const city = generateCity(world, seed);
   const group = world.buildMeshes(voxelMat, glassMat);
+  // carte des quartiers pour les shaders (crasse, tags, flaques, coupures de courant)
+  const districtTex = new THREE.DataTexture(city.districts.texture(), BLOCKS, BLOCKS, THREE.RGBAFormat);
+  districtTex.magFilter = districtTex.minFilter = THREE.LinearFilter;
+  districtTex.needsUpdate = true;
+  shared.uDistrict.value = districtTex;
+  for (const l of world.lights) l.d = DISTRICT_IDS.indexOf(city.districts.idAt(l.x, l.z));
 
   const elevators = new Elevators(city.elevators, world.col, world.lights, voxelMat, glassMat);
   group.add(elevators.group);
 
-  const metro = new Metro(city.metro, world.col, voxelMat, glassMat);
+  const metro = new Metro(city.subway ? [...city.metro, city.subway.line] : city.metro, world.col, voxelDynMat, glassMat);
   group.add(metro.group);
 
   const peds = new Pedestrians(city.peds, pedMat, seed, trainRiders(metro, seed));
   group.add(peds.group);
+
+  const birds = new Birds(world.spots, birdMat, seed);
+  group.add(birds.group);
 
   const steam = new Steam(world.steam);
   steam.setPixelScale(renderer.getDrawingBufferSize(new THREE.Vector2()).y, camera.fov);
@@ -125,10 +149,10 @@ function buildCity(seedStr: string): CityInstance {
   const traffic = new Traffic(city.lanes, voxelMat, seed);
   group.add(traffic.group);
 
-  const vehicles = new Vehicles(city.metro, world.spots, voxelMat, seed);
+  const vehicles = new Vehicles(city.metro, world.spots, voxelMat, seed, city.coast.sea);
   group.add(vehicles.group);
 
-  const spectacle = new Spectacle(world.spots, city.towers, city.bridges, city.lanes, voxelMat, seed);
+  const spectacle = new Spectacle(world.spots, city.towers, city.bridges, city.lanes, voxelDynMat, seed);
   group.add(spectacle.group);
   spectacle.onThunder = (d) => audio.thunder(d);
   const buf = renderer.getDrawingBufferSize(new THREE.Vector2());
@@ -149,8 +173,9 @@ function buildCity(seedStr: string): CityInstance {
   group.add(splash.points);
 
   const [rw, rh] = reflSize();
-  const road = createRoad(rw, rh);
+  const road = createRoad(rw, rh, (r) => clipToLand(city.coast, r));
   group.add(road);
+  group.add(createWater(city.coast.water, WATER_Y, road));
 
   const lights = new LightPool();
   lights.add(world.lights);
@@ -163,6 +188,12 @@ function buildCity(seedStr: string): CityInstance {
   group.add(pilot.mesh);
   lights.add(pilot.lights);
 
+  const events = new Events(city, lights, voxelDynMat, pedMat, seed);
+  group.add(events.group);
+  lights.add(events.lights);
+  const interactions = new Interactions(city.points);
+  const journal = new Journal(city, seedStr);
+
   const player = new Player(world.col);
   const sp = city.spawn;
   player.spawn(sp.x, sp.y + 0.01, sp.z, sp.yaw, sp.pitch);
@@ -170,7 +201,7 @@ function buildCity(seedStr: string): CityInstance {
   // lieux musicaux : clubs en sous-sol, bars au rez-de-chaussée
   const venues: CityInstance['venues'] = [];
   for (const b of city.basements)
-    if (b.kind === 0) venues.push({ x: (b.rect.x0 + b.rect.x1) / 2, y: -3, z: (b.rect.z0 + b.rect.z1) / 2, box: new THREE.Box3(new THREE.Vector3(b.rect.x0, -6.5, b.rect.z0), new THREE.Vector3(b.rect.x1, 0, b.rect.z1)), bar: false });
+    if (b.kind === 0 || b.kind === 3) venues.push({ x: (b.rect.x0 + b.rect.x1) / 2, y: -3, z: (b.rect.z0 + b.rect.z1) / 2, box: new THREE.Box3(new THREE.Vector3(b.rect.x0, -6.5, b.rect.z0), new THREE.Vector3(b.rect.x1, 0, b.rect.z1)), bar: false });
   for (const t of city.towers)
     if (t.room && t.room.kind === 0) {
       const r = t.room.rect;
@@ -186,7 +217,7 @@ function buildCity(seedStr: string): CityInstance {
       `${city.basements.length} sous-sols, ${city.metro.reduce((n, l) => n + l.stations.length, 0)} stations, ${peds.total} passants, ${world.steam.length} vapeurs, ` +
       `${city.dests.length} destinations, ${world.cones.length} cônes, ${world.boxes} boîtes, ${world.lights.length} lumières — ${Math.round(performance.now() - t0)} ms`,
   );
-  return { seed: seedStr, city, world, group, elevators, metro, peds, steam, traffic, vehicles, spectacle, beams, rain, splash, road, reflRender: road.onBeforeRender, lights, map, player, pilot, venues };
+  return { seed: seedStr, city, world, group, elevators, metro, peds, steam, traffic, vehicles, spectacle, beams, rain, splash, road, reflRender: road.onBeforeRender, lights, map, player, pilot, birds, events, interactions, journal, venues, districtTex };
 }
 
 function disposeCity(c: CityInstance) {
@@ -196,6 +227,9 @@ function disposeCity(c: CityInstance) {
     if (m.geometry) m.geometry.dispose();
   });
   c.road.dispose();
+  c.districtTex.dispose();
+  shared.uBlackId.value = -1;
+  if (c.journal.visible) c.journal.toggle();
   c.rain.dispose();
   c.splash.dispose();
   c.steam.dispose();
@@ -348,6 +382,7 @@ addEventListener('resize', onResize);
 // Boucle
 // ---------------------------------------------------------------------------
 const noInput = new Input(false);
+let curDistrict: DistrictId | null = null;
 let time = 0;
 let last = performance.now();
 let debugActive = false;
@@ -362,6 +397,79 @@ const fwd = new THREE.Vector3();
 const slow = { t: 0, crowd: 0, steam: 99, indoor: 0 };
 const prevDoors = new Map<object, number>();
 const prevElev = new Map<object, string>();
+
+// ---------------------------------------------------------------------------
+// Annonces vocales dans les rames (synthèse vocale du navigateur)
+// ---------------------------------------------------------------------------
+let lastAnn = '';
+function transferOf(c: CityInstance, line: string, station: string): string {
+  const sub = c.city.subway;
+  if (!sub) return '';
+  for (const s of sub.stations) {
+    if (!s.transfer) continue;
+    if (line === sub.line.name && s.name === station) return ` Correspondance avec la ligne B, station ${s.transfer}.`;
+    if (line === 'Ligne B' && s.transfer === station) return ` Correspondance avec la ligne C, station ${s.name}.`;
+  }
+  return '';
+}
+function announce(c: CityInstance, m: ReturnType<Metro['context']>) {
+  if (!m || m.kind !== 'train') { lastAnn = ''; return; }
+  const key = m.station ? `at:${m.station}` : `next:${m.next}`;
+  if (key === lastAnn) return;
+  const first = lastAnn === '';
+  lastAnn = key;
+  if (first && m.station) return; // on vient de monter : pas d'annonce immédiate
+  const text = m.station
+    ? `${m.station}.${transferOf(c, m.line.name, m.station)}`
+    : `Prochaine station : ${m.next}.${transferOf(c, m.line.name, m.next)}`;
+  say(text);
+}
+function say(text: string) {
+  try {
+    const s = window.speechSynthesis;
+    if (!s || parseFloat(optVol.value) <= 0) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR';
+    const v = s.getVoices().find((x) => x.lang.startsWith('fr'));
+    if (v) u.voice = v;
+    u.rate = 1.02; u.pitch = 1.1;
+    u.volume = Math.min(1, parseFloat(optVol.value));
+    s.cancel();
+    s.speak(u);
+  } catch { /* synthèse vocale indisponible */ }
+}
+
+let barkAt = 0, journalAt = 0;
+function discover(c: CityInstance, id: string) {
+  const n = c.journal.mark(id);
+  if (n) { hud.toast(`CARNET · ${n.toUpperCase()}`); audio.discover(); }
+}
+/** Proximité de l'eau (1 : au bord ou dedans, 0 : à plus de 40 m). */
+function waterNear(c: CityInstance, p: THREE.Vector3) {
+  let d = 1e9;
+  for (const r of c.city.coast.water) {
+    const dx = Math.max(r.x0 - p.x, 0, p.x - r.x1), dz = Math.max(r.z0 - p.z, 0, p.z - r.z1);
+    d = Math.min(d, Math.hypot(dx, dz));
+  }
+  return Math.max(0, 1 - d / 40);
+}
+function interact(c: CityInstance, q: ReturnType<Interactions['nearest']> & object) {
+  const P = c.player;
+  if (q.kind === 'seat') {
+    P.sitAt({ x: q.x, y: q.y, z: q.z, yaw: q.yaw, floor: q.floor });
+    audio.sitDown();
+    discover(c, 'x-assis');
+  } else if (q.kind === 'vend') {
+    audio.vend();
+    hud.toast(Interactions.drink().toUpperCase());
+    discover(c, 'x-canette');
+  } else {
+    audio.slurp();
+    hud.toast(`VOUS DÉGUSTEZ ${Interactions.dish().toUpperCase()}`);
+    discover(c, 'x-manger');
+  }
+}
+void QUAY1;
 
 /** Invite liée à la voiture volante (monter / descendre). */
 function carPrompt(c: CityInstance): string {
@@ -431,6 +539,7 @@ function tick(dt: number, render: boolean) {
       else c.map.toggle();
     }
     if (input.hitChar('h')) hud.toggleHelp();
+    if (input.hitChar('j')) c.journal.toggle();
     if (input.hitChar('r')) {
       if (Pi.state === 'flying') Pi.park();
       const sp = c.city.spawn;
@@ -441,6 +550,11 @@ function tick(dt: number, render: boolean) {
 
   c.elevators.update(dt);
   const carry = c.metro.update(dt, P.pos);
+  // escalators : entraînement horizontal (les marches font monter)
+  P.ext.set(0, 0, 0);
+  if (!P.fly)
+    for (const e of c.city.escalators)
+      if (P.pos.x > e.r.x0 && P.pos.x < e.r.x1 && P.pos.z > e.r.z0 && P.pos.z < e.r.z1 && P.pos.y > e.y0 && P.pos.y < e.y1) { P.ext.set(e.vx, 0, e.vz); break; }
   const piloting = Pi.state === 'flying';
   if (piloting) {
     // aux commandes : le "joueur" suit la voiture (son, carte, passants)
@@ -454,7 +568,10 @@ function tick(dt: number, render: boolean) {
     P.update(dt, inp);
   }
   c.peds.update(dt, P.pos, time);
-  const metroPrompt = P.fly || piloting ? '' : hud.setMetro(c.metro.context(P.pos));
+  c.birds.update(dt, time, P.pos);
+  const mctx = P.fly || piloting ? null : c.metro.context(P.pos);
+  const metroPrompt = hud.setMetro(mctx);
+  announce(c, mctx);
 
   // Interactions ascenseur
   const ctx = P.fly || piloting ? null : c.elevators.context(P.pos.x, P.pos.y, P.pos.z);
@@ -469,7 +586,14 @@ function tick(dt: number, render: boolean) {
     const busy = ctx.e.state !== 'idle';
     hud.setPrompt(busy ? 'Ascenseur en mouvement…' : '<b>[E]</b> Appeler l’ascenseur');
     if (active && input.hitChar('e')) c.elevators.request(ctx.e, ctx.stop);
-  } else hud.setPrompt(carPrompt(c) || metroPrompt);
+  } else {
+    const ip = !P.fly && !piloting && !P.seat ? c.interactions.nearest(P.pos) : null;
+    hud.setPrompt(carPrompt(c) || metroPrompt || (P.seat ? '<b>[E]</b> Se lever' : ip ? Interactions.prompt(ip) : ''));
+    if (active && input.hitChar('e')) {
+      if (P.seat) P.stand();
+      else if (ip) interact(c, ip);
+    }
+  }
 
   // Voiture volante : appel, montée, descente
   if (active && input.hitChar('v')) vKey(c, !!ctx || !!c.metro.interior(P.pos, hideBox));
@@ -490,6 +614,14 @@ function tick(dt: number, render: boolean) {
   }
   camera.updateMatrixWorld();
   hud.setAltitude(P.pos.y);
+  // quartier courant : nom dans le HUD, annonce à l'entrée
+  const did = c.city.districts.idAt(P.pos.x, P.pos.z);
+  if (did !== curDistrict && P.pos.y < 300) discover(c, `q-${did}`);
+  if (did !== curDistrict) {
+    if (curDistrict !== null && P.pos.y < 60) hud.toast(DISTRICTS[did].name.toUpperCase());
+    curDistrict = did;
+    hud.setDistrict(DISTRICTS[did].name, DISTRICTS[did].map);
+  }
   c.map.draw(P.pos.x, P.pos.z, P.yaw, Pi.state === 'parked' || Pi.state === 'arriving' ? Pi.pos : null);
 
   // Brouillard selon l'altitude (dense au sol, nuage à CLOUD_Y, clair au-dessus)
@@ -506,7 +638,11 @@ function tick(dt: number, render: boolean) {
 
   c.beams.begin(dens);
   c.traffic.update(dt, time, camera.position);
-  c.vehicles.update(dt, time, camera.position, P.pos, c.beams);
+  camera.getWorldDirection(fwd);
+  c.vehicles.update(dt, time, camera.position, P.pos, c.beams, fwd);
+  c.events.update(dt, time, camera.position, P.pos, c.beams);
+  if (c.events.notice) hud.toast(c.events.notice.text);
+  for (const w of c.events.witnessed) discover(c, `x-${w}`);
   Pi.drawBeams(c.beams);
   const flash = c.spectacle.update(dt, time, camera.position, c.beams, dens, optStorm.checked);
   c.beams.end();
@@ -552,7 +688,17 @@ function tick(dt: number, render: boolean) {
     }
     const roof = shelterAt(c.world, P.pos.x, P.pos.z);
     const shelter = roof > P.pos.y + 1.9 ? 1 : 0;
-    const movers: Mover[] = [...c.traffic.nearest, ...c.vehicles.nearest].sort((a, b) => a.d2 - b.d2).slice(0, 7);
+    const movers: Mover[] = [...c.traffic.nearest, ...c.vehicles.nearest, ...c.events.nearest].sort((a, b) => a.d2 - b.d2).slice(0, 7);
+    // animaux et événements : sons ponctuels
+    if (c.peds.dogNear < 7 && time > barkAt) { barkAt = time + 3 + Math.random() * 5; audio.bark(c.peds.dogNear); }
+    if (c.peds.ratScared) audio.squeak();
+    if (c.birds.flutter >= 0) audio.flutter(c.birds.flutter);
+    if (c.birds.caw) audio.caw(20);
+    const sx = c.events.sfx;
+    if (sx.drum >= 0) audio.drum(sx.drum);
+    if (sx.cracker >= 0) audio.crackers(sx.cracker);
+    if (sx.blackOn) audio.powerDown();
+    if (sx.blackOff) audio.powerUp();
     let trainNear = 999, trainSpeed = 0;
     for (const t of c.metro.trains) {
       const d = t.group.position.distanceTo(P.pos);
@@ -594,7 +740,21 @@ function tick(dt: number, render: boolean) {
       engine: flying ? Math.min(1, Pi.speed / 60) : Pi.state === 'arriving' ? 0.45 : Pi.state === 'parked' && Pi.distTo(P.pos) < 25 ? 0.02 : -1,
       radio: flying && parseFloat(optMusic.value) > 0,
       bump: flying && time - Pi.bump < 1e-6,
+      district: did, water: waterNear(c, P.pos), blackout: shared.uBlackId.value >= 0 && DISTRICT_IDS[shared.uBlackId.value] === did,
+      swarm: sx.swarm,
     }, time);
+  }
+
+  // carnet : transports, altitude, eau, lieux et secrets à proximité
+  if (mctx?.kind === 'train') discover(c, `t-${mctx.line.name}`);
+  if (piloting) discover(c, 't-voiture');
+  if (ctx?.kind === 'inside' && P.pos.y > 150) discover(c, 't-ascenseur');
+  if (camera.position.y > CLOUD_Y + 5) discover(c, 'x-nuages');
+  if (P.pos.y < -1.0 && !piloting && waterNear(c, P.pos) > 0.98) discover(c, 'x-eau');
+  if (time - journalAt > 0.25) {
+    journalAt = time;
+    const found = c.journal.check(P.pos);
+    if (found) { hud.toast(`DÉCOUVERTE · ${found.toUpperCase()}`); audio.discover(); }
   }
 
   if (render) post.render();

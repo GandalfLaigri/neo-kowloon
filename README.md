@@ -17,12 +17,13 @@ Ajoutez `?seed=mon-quartier` à l'URL (ou utilisez « Nouvelle ville » dans le 
 | Touche | Action |
 | --- | --- |
 | ZQSD / WASD | marcher (Maj : courir) · Espace : sauter |
-| E | appeler l'ascenseur / étage suivant dans la cabine |
+| E | appeler l'ascenseur / étage suivant dans la cabine · s'asseoir, acheter une canette, commander à manger |
 | 1 – 9 | choisir l'étage dans la cabine |
 | F | vol libre (Espace monter, C descendre, Maj turbo) |
 | V | appeler la voiture volante, monter à bord, en descendre (à moins de 5 m du sol, à vitesse réduite) |
 | En voiture | souris : regarder · ZQSD / WASD : avancer (dans la direction du regard), glisser · Espace / C : monter / descendre · Maj : turbo |
 | M | carte cliquable : choisir une destination pour s'y téléporter (Échap pour fermer) |
+| J | carnet d'exploration : quartiers, lieux, transports, expériences et secrets à découvrir |
 | R | retour au point de départ · H : masquer l'aide · Échap : menu |
 
 ## Ce qu'on trouve dans la ville
@@ -45,6 +46,19 @@ Ajoutez `?seed=mon-quartier` à l'URL (ou utilisez « Nouvelle ville » dans le 
 - **Détails de rue** : voitures garées (taxis, fourgons, épaves, feux de détresse), abribus, cabines réseau, kiosques, armoires électriques, vélos, plaques de rue, caméras de surveillance, distributeurs de billets, affiches déchirées.
 - **Voiture volante** : appelez-la (V), elle descend du ciel près de vous ; pilotage avec inertie, inclinaison dans les virages, collisions, caméra de poursuite, champ de vision qui s'élargit avec la vitesse, moteur et autoradio techno. Garée, elle apparaît sur la carte.
 - **Pluie réglable** (menu) : aucune, légère ou battante (densité et longueur des gouttes, éclaboussures au sol, ondulations des flaques, brouillard, son).
+- **Six quartiers** (nom affiché à l'entrée, zones colorées sur la carte), chacun avec son architecture, ses néons, sa propreté, sa foule et son ambiance sonore :
+  - *Centre d'affaires* : mégatours, Arcologie Tenkai ;
+  - *Quartier Ivoire* (riche) : tours de verre, avenues arborées, bornes lumineuses, jardins à fontaine, rues sans un tag ;
+  - *Quartier de Jade* (asiatique) : enseignes serrées, guirlandes de lanternes au-dessus des rues, portes monumentales, charrettes de dim sum, air de cithare ;
+  - *Les Bas-Fonds* : immeubles bas couverts de tags, cabanes de tôle accrochées aux façades, fûts enflammés, lampadaires morts, chiens errants ;
+  - *Quartier des Plaisirs* : néons rose et violet, arches lumineuses, hôtels à cœur clignotant, files d'attente devant les clubs, foule dense ;
+  - *Les Docks* : entrepôts, dépôts de conteneurs, projecteurs au sodium.
+- **Port et canal** : un front de mer borde un côté de la ville. Quai avec bittes d'amarrage et escaliers de débarquement, portiques à conteneurs, porte-conteneurs à quai, canal des Lanternes traversant un îlot (passerelles en dos d'âne, sampans), palais flottant, village sur pilotis, yacht, vieux phare au bout d'une jetée, plateforme pétrolière et îles à l'horizon. L'eau reflète les néons (elle réutilise le miroir de la chaussée).
+- **Métro souterrain** (ligne C, 4 stations) : entrées sur les trottoirs, mezzanine avec portillons et automates, escalators qui vous emportent, quais carrelés aux couleurs du quartier, correspondance avec la ligne B. Annonces vocales dans toutes les rames (synthèse vocale du navigateur).
+- **Faune urbaine** : pigeons et corbeaux qui s'envolent à votre approche et vont se poser plus loin, rats qui détalent le long des murs, chiens errants qui vous fixent et aboient.
+- **Événements** : course-poursuite de police dans le ciel, coupure de courant qui plonge un quartier dans le noir, spectacle de drones formant des figures au-dessus du quartier Ivoire, défilé du dragon avec tambours et pétards dans le Quartier de Jade.
+- **Interactions** : s'asseoir sur un banc, au bar ou sur un quai (vue assise), acheter une canette aux distributeurs, commander à manger aux étals et aux kiosques.
+- **Carnet d'exploration** (touche J) : 38 entrées à cocher, dont des secrets (un bar clandestin sans enseigne, une fresque visible seulement du ciel, une épave sur un toit, un autel caché, un jardin suspendu, les tags du Fantôme…). La progression est conservée dans le navigateur.
 
 ## Architecture
 
@@ -66,6 +80,10 @@ Ajoutez `?seed=mon-quartier` à l'URL (ou utilisez « Nouvelle ville » dans le 
 - `src/world/street.ts`, `src/world/extras.ts` : mobilier et détails de rue, passages piétons, balcons, éléments de toit.
 - `src/pilot.ts` : voiture volante (appel, pilotage, collisions, caméra de poursuite).
 - `src/render/splash.ts` : éclaboussures de pluie.
+- `src/world/districts.ts`, `src/world/quarters.ts` : répartition et identité des quartiers, décor propre à chacun, oiseaux, secrets.
+- `src/world/coast.ts`, `src/render/water.ts` : front de mer, canal, port ; eau réfléchissante.
+- `src/world/subway.ts` : ligne souterraine (tunnels, stations, escalators).
+- `src/fauna.ts`, `src/events.ts`, `src/interact.ts`, `src/journal.ts` : oiseaux, événements, interactions, carnet d'exploration.
 - `src/elevators.ts` : cabines animées, portes palières, plateformes mobiles pour la physique.
 - `src/player.ts` : contrôleur à la première personne (collisions AABB, marches de 0,5 m, vol libre).
 - `src/traffic.ts`, `src/render/rain.ts`, `src/render/sky.ts`, `src/render/post.ts` : trafic aérien, pluie, ciel et nuages, bloom et étalonnage.

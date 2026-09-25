@@ -151,7 +151,7 @@ function library(ctx: Ctx, L: Landmark) {
         for (const side of [-1, 1]) {
           const ca = a + 0.75 + k * 1.5, cd = d + 0.6 + side * 1.05;
           box(R(ca - 0.22, ca + 0.22, cd - 0.22, cd + 0.22), FL, FL + 0.45, { color: hex(0x2a1a14) });
-          if (rng.chance(0.45)) { const [x, z] = P(ca, cd); ctx.sit(x, FL + 0.45, z, side > 0 ? outward : inward, 7); }
+          { const [x, z] = P(ca, cd); ctx.seat(rng.chance(0.45), x, FL + 0.45, z, side > 0 ? outward : inward, 7); }
         }
     }
   // banque de prêt et bibliothécaire, lustres
@@ -179,7 +179,7 @@ function library(ctx: Ctx, L: Landmark) {
   const [px, pz] = P(ac, 5.5);
   world.light(px, 12, pz, WARM, 1.6, 16);
   // quelques lecteurs sur les marches malgré la pluie
-  for (let i = 0; i < 3; i++) if (rng.chance(0.6)) { const [x, z] = P(rng.range(b0 + 3, b1 - 3), 2.3); ctx.sit(x, 1.0, z, outward, rng.chance(0.5) ? 1 : 7); }
+  for (let i = 0; i < 3; i++) { const [x, z] = P(rng.range(b0 + 3, b1 - 3), 2.3); ctx.seat(rng.chance(0.6), x, 1.0, z, outward, rng.chance(0.5) ? 1 : 7); }
   const [dx, dz] = P(ac, -1.5);
   ctx.dest(CAT, L.name, dx, 0.52, dz, outward); // caméra : regarde vers l'intérieur du lot
 }

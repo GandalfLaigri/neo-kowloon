@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { BLOCKS, HALF, PITCH, ROAD } from '../config';
-import { GLSL_COMMON, GLSL_LIGHTING, shared } from './materials';
+import type { Rect } from '../world/geom';
+import { GLSL_COMMON, GLSL_DISTRICT, GLSL_LIGHTING, shared } from './materials';
 
 const RoadShader = {
   name: 'road',
@@ -35,6 +36,7 @@ const RoadShader = {
     #include <fog_pars_fragment>
     ${GLSL_COMMON}
     ${GLSL_LIGHTING}
+    ${GLSL_DISTRICT}
     void main(){
       vec2 w = vWP.xz;
       vec2 l = mod(w + ${(HALF + PITCH / 2).toFixed(1)}, ${PITCH.toFixed(1)}) - ${(PITCH / 2).toFixed(1)};
@@ -57,7 +59,8 @@ const RoadShader = {
         if (ad.x < R + 4.0 && ad.x > R + 0.6 && fract(w.y / 1.2) < 0.5 && ad.y < R - 0.5) paint = 1.0;
       }
       paint *= 0.55 + 0.45 * vnoise(w * 3.0);
-      float pud = smoothstep(0.5, 0.66, vnoise(w * 0.12) * 0.65 + vnoise(w * 0.5) * 0.35);
+      float p0 = 0.5 + (0.6 - districtAt(w).b) * 0.3;
+      float pud = smoothstep(p0, p0 + 0.16, vnoise(w * 0.12) * 0.65 + vnoise(w * 0.5) * 0.35);
       vec2 nrm = vec2(vnoise(w * 5.0 + uTime * vec2(0.0, 1.7)) - 0.5, vnoise(w * 5.0 + 17.0 - uTime * vec2(1.4, 0.0)) - 0.5) * mix(0.3, 1.0, min(uRain, 1.0));
       // gouttes : anneaux qui s'élargissent
       vec2 rp = w * 1.6;
@@ -91,7 +94,7 @@ const RoadShader = {
  * (x → x monde, y → -z monde). Sous les îlots il n'y a rien : les trémies des
  * sous-sols ne laissent plus apparaître de "flaque".
  */
-function roadGeometry() {
+function roadGeometry(clip: (r: Rect) => Rect | null) {
   const R = ROAD / 2;
   const lines: number[] = [];
   for (let i = -1; i <= BLOCKS + 1; i++) lines.push(-HALF + i * PITCH);
@@ -105,7 +108,10 @@ function roadGeometry() {
     if (E > x) rects.push([x, c - R, E, c + R]);
   }
   const pos: number[] = [], idx: number[] = [];
-  for (const [x0, z0, x1, z1] of rects) {
+  for (const r0 of rects) {
+    const k = clip({ x0: r0[0], z0: r0[1], x1: r0[2], z1: r0[3] });
+    if (!k) continue;
+    const { x0, z0, x1, z1 } = k;
     const v = pos.length / 3;
     pos.push(x0, -z0, 0, x1, -z0, 0, x1, -z1, 0, x0, -z1, 0);
     idx.push(v, v + 2, v + 1, v, v + 3, v + 2);
@@ -118,8 +124,8 @@ function roadGeometry() {
   return g;
 }
 
-export function createRoad(w: number, h: number): Reflector {
-  const refl = new Reflector(roadGeometry(), {
+export function createRoad(w: number, h: number, clip: (r: Rect) => Rect | null = (r) => r): Reflector {
+  const refl = new Reflector(roadGeometry(clip), {
     textureWidth: w,
     textureHeight: h,
     clipBias: 0.003,
